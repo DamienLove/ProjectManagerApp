@@ -1,0 +1,10 @@
+﻿customtkinter
+gitpython
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+pystray
+pillow
+python-dotenv
+requests
+tqdm
