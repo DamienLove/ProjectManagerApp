@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,12 +30,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -52,9 +51,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +84,14 @@ class MainActivity : ComponentActivity() {
 
 data class Project(val name: String, val status: String)
 
+enum class AppScreen {
+    Login,
+    Setup,
+    Home,
+    Terminal,
+    Projects
+}
+
 private val BgTop = Color(0xFF0B0F14)
 private val BgBottom = Color(0xFF141A22)
 private val Panel = Color(0xFF101820)
@@ -98,6 +109,15 @@ fun OmniRemoteApp() {
     val scope = rememberCoroutineScope()
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
+    val expectedEmail = "me@damiennichols.com"
+    val auth = remember { FirebaseAuth.getInstance() }
+    var authed by remember { mutableStateOf(auth.currentUser?.email?.equals(expectedEmail, true) == true) }
+    var authEmail by rememberSaveable { mutableStateOf(expectedEmail) }
+    var authPassword by rememberSaveable { mutableStateOf("") }
+    var authBusy by remember { mutableStateOf(false) }
+    var authError by remember { mutableStateOf<String?>(null) }
+    var showPassword by rememberSaveable { mutableStateOf(false) }
+
     var host by rememberSaveable { mutableStateOf("") }
     var port by rememberSaveable { mutableStateOf("8765") }
     var token by rememberSaveable { mutableStateOf("") }
@@ -107,6 +127,9 @@ fun OmniRemoteApp() {
     var connected by remember { mutableStateOf(false) }
     var activeSessionId by remember { mutableStateOf<String?>(null) }
     var secure by rememberSaveable { mutableStateOf(false) }
+    var showToken by rememberSaveable { mutableStateOf(false) }
+    var screen by rememberSaveable { mutableStateOf(if (authed) AppScreen.Setup else AppScreen.Login) }
+    var projectsLoaded by remember { mutableStateOf(false) }
 
     val terminalLines = remember { mutableStateListOf<String>() }
     val projects = remember { mutableStateListOf<Project>() }
@@ -118,6 +141,17 @@ fun OmniRemoteApp() {
     }
 
     var socket by remember { mutableStateOf<WebSocket?>(null) }
+
+    DisposableEffect(Unit) {
+        val listener = FirebaseAuth.AuthStateListener { fbAuth ->
+            val email = fbAuth.currentUser?.email
+            authed = email != null && email.equals(expectedEmail, true)
+        }
+        auth.addAuthStateListener(listener)
+        onDispose {
+            auth.removeAuthStateListener(listener)
+        }
+    }
 
     fun appendLine(line: String) {
         terminalLines.add(line)
@@ -142,6 +176,53 @@ fun OmniRemoteApp() {
         return if (cleanPort.isBlank()) cleanHost else "$cleanHost:$cleanPort"
     }
 
+    fun disconnectWebSocket() {
+        socket?.close(1000, "client disconnect")
+        socket = null
+        connected = false
+        activeSessionId = null
+        status = "disconnected"
+        projectsLoaded = false
+    }
+
+    fun signIn() {
+        val email = authEmail.trim()
+        if (email.isBlank() || authPassword.isBlank()) {
+            authError = "Email and password required"
+            return
+        }
+        if (!email.equals(expectedEmail, true)) {
+            authError = "Use $expectedEmail"
+            return
+        }
+        authBusy = true
+        authError = null
+        auth.signInWithEmailAndPassword(email, authPassword)
+            .addOnSuccessListener {
+                authBusy = false
+                authPassword = ""
+                val signedInEmail = auth.currentUser?.email
+                if (signedInEmail == null || !signedInEmail.equals(expectedEmail, true)) {
+                    auth.signOut()
+                    authError = "Signed in as $signedInEmail. Use $expectedEmail."
+                } else {
+                    status = "signed in"
+                }
+            }
+            .addOnFailureListener { e ->
+                authBusy = false
+                authError = e.message ?: "Sign-in failed"
+            }
+    }
+
+    fun signOut() {
+        disconnectWebSocket()
+        auth.signOut()
+        authPassword = ""
+        authError = null
+        status = "signed out"
+    }
+
     fun connectWebSocket() {
         val cleanHost = normalizedHost()
         val cleanToken = token.trim()
@@ -149,6 +230,7 @@ fun OmniRemoteApp() {
             status = "missing host/token"
             return
         }
+        disconnectWebSocket()
         val baseHost = buildBaseHost()
         val scheme = if (secure) "wss" else "ws"
         val encodedToken = URLEncoder.encode(cleanToken, "UTF-8")
@@ -191,6 +273,7 @@ fun OmniRemoteApp() {
                 mainHandler.post {
                     status = "closing"
                     connected = false
+                    activeSessionId = null
                 }
             }
 
@@ -198,6 +281,7 @@ fun OmniRemoteApp() {
                 mainHandler.post {
                     status = "error: ${t.message}"
                     connected = false
+                    activeSessionId = null
                     appendLine("[error] ${t.message}")
                 }
             }
@@ -205,13 +289,6 @@ fun OmniRemoteApp() {
 
         socket = client.newWebSocket(request, listener)
         status = "connecting"
-    }
-
-    fun disconnectWebSocket() {
-        socket?.close(1000, "client disconnect")
-        socket = null
-        connected = false
-        status = "disconnected"
     }
 
     fun sendRun(cmd: String) {
@@ -285,7 +362,590 @@ fun OmniRemoteApp() {
         }
     }
 
+    fun refreshProjectsAsync() {
+        scope.launch {
+            try {
+                status = "loading projects"
+                fetchProjects()
+                projectsLoaded = true
+                status = "projects loaded"
+            } catch (e: Exception) {
+                status = "error: ${e.message}"
+            }
+        }
+    }
+
+    fun fetchCloudConfig() {
+        if (!authed) {
+            status = "sign in required"
+            return
+        }
+        status = "loading cloud config"
+        FirebaseFirestore.getInstance()
+            .collection("omniremote")
+            .document("connection")
+            .get()
+            .addOnSuccessListener { doc ->
+                val url = doc.getString("url")
+                if (!url.isNullOrBlank()) {
+                    val uri = Uri.parse(url.trim())
+                    val hostFromUrl = uri.host.orEmpty()
+                    if (hostFromUrl.isNotBlank()) {
+                        host = hostFromUrl
+                    }
+                    if (uri.port != -1) {
+                        port = uri.port.toString()
+                    } else if (uri.scheme.equals("https", ignoreCase = true)) {
+                        port = ""
+                    }
+                    secure = uri.scheme.equals("https", ignoreCase = true) ||
+                        uri.scheme.equals("wss", ignoreCase = true)
+                }
+
+                val hostOverride = doc.getString("host")
+                val portOverride = doc.get("port")
+                val secureOverride = doc.getBoolean("secure")
+                if (!hostOverride.isNullOrBlank()) {
+                    host = hostOverride
+                }
+                when (portOverride) {
+                    is Number -> port = portOverride.toInt().toString()
+                    is String -> if (portOverride.isNotBlank()) {
+                        port = portOverride
+                    }
+                }
+                if (secureOverride != null) {
+                    secure = secureOverride
+                }
+                status = "cloud config loaded"
+            }
+            .addOnFailureListener { e ->
+                status = "cloud config error: ${e.message}"
+            }
+    }
+
+    LaunchedEffect(connected, projectsLoaded) {
+        if (connected && projectsLoaded && screen == AppScreen.Setup) {
+            screen = AppScreen.Home
+        }
+    }
+
+    LaunchedEffect(authed) {
+        if (!authed) {
+            screen = AppScreen.Login
+        } else if (screen == AppScreen.Login) {
+            screen = AppScreen.Setup
+        }
+    }
+
     val gradient = Brush.linearGradient(listOf(BgTop, BgBottom))
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(gradient)
+            .padding(16.dp)
+    ) {
+        when (screen) {
+            AppScreen.Login -> LoginScreen(
+                email = authEmail,
+                password = authPassword,
+                showPassword = showPassword,
+                busy = authBusy,
+                error = authError,
+                expectedEmail = expectedEmail,
+                onEmailChange = { authEmail = it },
+                onPasswordChange = { authPassword = it },
+                onShowPasswordChange = { showPassword = it },
+                onSignIn = { signIn() }
+            )
+            AppScreen.Setup -> SetupScreen(
+                host = host,
+                port = port,
+                token = token,
+                showToken = showToken,
+                secure = secure,
+                status = status,
+                connected = connected,
+                projectsLoaded = projectsLoaded,
+                authed = authed,
+                authEmail = authEmail,
+                onHostChange = { host = it },
+                onPortChange = { port = it },
+                onTokenChange = { token = it },
+                onShowTokenChange = { showToken = it },
+                onSecureChange = { secure = it },
+                onConnect = { connectWebSocket() },
+                onDisconnect = { disconnectWebSocket() },
+                onFetchCloudConfig = { fetchCloudConfig() },
+                onRefreshProjects = { refreshProjectsAsync() },
+                onContinue = { screen = AppScreen.Home },
+                onSignOut = { signOut() }
+            )
+            AppScreen.Home -> HomeScreen(
+                status = status,
+                connected = connected,
+                onOpenTerminal = { screen = AppScreen.Terminal },
+                onOpenProjects = { screen = AppScreen.Projects },
+                onOpenSettings = { screen = AppScreen.Setup },
+                onOpenRemoteDesktop = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://remotedesktop.google.com/access"))
+                    context.startActivity(intent)
+                },
+                onRefreshProjects = { refreshProjectsAsync() },
+                onDisconnect = { disconnectWebSocket() }
+            )
+            AppScreen.Terminal -> TerminalScreen(
+                cwd = cwd,
+                command = command,
+                status = status,
+                terminalLines = terminalLines,
+                connected = connected,
+                canSendInput = activeSessionId != null,
+                onBack = { screen = AppScreen.Home },
+                onCwdChange = { cwd = it },
+                onCommandChange = { command = it },
+                onRun = {
+                    sendRun(command)
+                    command = ""
+                },
+                onSendInput = {
+                    sendStdin(command + "\n")
+                    command = ""
+                },
+                onClear = { terminalLines.clear() }
+            )
+            AppScreen.Projects -> ProjectsScreen(
+                status = status,
+                projects = projects,
+                onBack = { screen = AppScreen.Home },
+                onRefresh = { refreshProjectsAsync() },
+                onActivate = { project ->
+                    scope.launch {
+                        try {
+                            status = "activating ${project.name}"
+                            postProjectAction(project.name, "activate")
+                            fetchProjects()
+                            status = "activated"
+                        } catch (e: Exception) {
+                            status = "error: ${e.message}"
+                        }
+                    }
+                },
+                onDeactivate = { project ->
+                    scope.launch {
+                        try {
+                            status = "deactivating ${project.name}"
+                            postProjectAction(project.name, "deactivate")
+                            fetchProjects()
+                            status = "deactivated"
+                        } catch (e: Exception) {
+                            status = "error: ${e.message}"
+                        }
+                    }
+                },
+                onOpenStudio = { project ->
+                    scope.launch {
+                        try {
+                            status = "opening studio"
+                            postProjectAction(project.name, "open-studio")
+                            status = "studio opened"
+                        } catch (e: Exception) {
+                            status = "error: ${e.message}"
+                        }
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoginScreen(
+    email: String,
+    password: String,
+    showPassword: Boolean,
+    busy: Boolean,
+    error: String?,
+    expectedEmail: String,
+    onEmailChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onShowPasswordChange: (Boolean) -> Unit,
+    onSignIn: () -> Unit
+) {
+    val ready = email.trim().isNotBlank() && password.isNotBlank()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = "Omni Remote",
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 26.sp
+        )
+        Text(
+            text = "Firebase sign-in required",
+            color = TextMuted,
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Panel),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Sign In", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = onEmailChange,
+                    label = { Text("Email") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = darkFieldColors()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (showPassword) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    colors = darkFieldColors()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Switch(checked = showPassword, onCheckedChange = onShowPasswordChange)
+                    Text(
+                        text = "Show password",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = onSignIn,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    enabled = ready && !busy
+                ) {
+                    Text(if (busy) "Signing in..." else "Sign In")
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Authorized email: $expectedEmail",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                if (!error.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(text = error, color = Warning, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupScreen(
+    host: String,
+    port: String,
+    token: String,
+    showToken: Boolean,
+    secure: Boolean,
+    status: String,
+    connected: Boolean,
+    projectsLoaded: Boolean,
+    authed: Boolean,
+    authEmail: String,
+    onHostChange: (String) -> Unit,
+    onPortChange: (String) -> Unit,
+    onTokenChange: (String) -> Unit,
+    onShowTokenChange: (Boolean) -> Unit,
+    onSecureChange: (Boolean) -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onFetchCloudConfig: () -> Unit,
+    onRefreshProjects: () -> Unit,
+    onContinue: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    val ready = host.trim().isNotBlank() && token.trim().isNotBlank()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = "Omni Remote",
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 26.sp
+        )
+        Text(
+            text = "status: $status",
+            color = TextMuted,
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (authed) "signed in: $authEmail" else "not signed in",
+                color = if (authed) Accent else Warning,
+                fontSize = 12.sp
+            )
+            Button(
+                onClick = onSignOut,
+                colors = ButtonDefaults.buttonColors(containerColor = Warning),
+                enabled = authed
+            ) {
+                Text("Sign out")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Panel),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Connection Setup", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = onHostChange,
+                        label = { Text("Host") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        colors = darkFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = onPortChange,
+                        label = { Text("Port") },
+                        modifier = Modifier.width(120.dp),
+                        singleLine = true,
+                        colors = darkFieldColors()
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = onTokenChange,
+                    label = { Text("Token") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (showToken) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    colors = darkFieldColors()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Switch(checked = showToken, onCheckedChange = onShowTokenChange)
+                    Text(
+                        text = "Show token",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Switch(checked = secure, onCheckedChange = onSecureChange)
+                    Text(
+                        text = "Secure (HTTPS/WSS for tunnel)",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onConnect,
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        enabled = ready && !connected
+                    ) {
+                        Text("Connect")
+                    }
+                    Button(
+                        onClick = onDisconnect,
+                        colors = ButtonDefaults.buttonColors(containerColor = Warning),
+                        enabled = connected
+                    ) {
+                        Text("Disconnect")
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onFetchCloudConfig,
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAlt),
+                        enabled = authed
+                    ) {
+                        Text("Fetch Cloud")
+                    }
+                    Button(
+                        onClick = onRefreshProjects,
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        enabled = ready
+                    ) {
+                        Text("Refresh Projects")
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Panel),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Next", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Once connected and projects are loaded, jump into the home view.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = onContinue,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    enabled = connected && projectsLoaded
+                ) {
+                    Text("Go to Home")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    status: String,
+    connected: Boolean,
+    onOpenTerminal: () -> Unit,
+    onOpenProjects: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenRemoteDesktop: () -> Unit,
+    onRefreshProjects: () -> Unit,
+    onDisconnect: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = "Omni Remote",
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 26.sp
+        )
+        Text(
+            text = if (connected) "connected" else "disconnected",
+            color = if (connected) Accent else Warning,
+            fontSize = 12.sp
+        )
+        Text(
+            text = "status: $status",
+            color = TextMuted,
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ActionCard(
+                title = "Terminal",
+                subtitle = "Full screen CLI with live output.",
+                buttonText = "Open",
+                buttonColor = Accent,
+                onClick = onOpenTerminal,
+                modifier = Modifier.weight(1f)
+            )
+            ActionCard(
+                title = "Projects",
+                subtitle = "Activate, deactivate, and open Studio.",
+                buttonText = "Open",
+                buttonColor = AccentAlt,
+                onClick = onOpenProjects,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ActionCard(
+                title = "Remote Desktop",
+                subtitle = "Chrome Remote Desktop full UI.",
+                buttonText = "Launch",
+                buttonColor = AccentAlt,
+                onClick = onOpenRemoteDesktop,
+                modifier = Modifier.weight(1f)
+            )
+            ActionCard(
+                title = "Settings",
+                subtitle = "Edit connection details.",
+                buttonText = "Open",
+                buttonColor = Warning,
+                onClick = onOpenSettings,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onRefreshProjects,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text("Refresh Projects")
+            }
+            Button(
+                onClick = onDisconnect,
+                colors = ButtonDefaults.buttonColors(containerColor = Warning)
+            ) {
+                Text("Disconnect")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalScreen(
+    cwd: String,
+    command: String,
+    status: String,
+    terminalLines: List<String>,
+    connected: Boolean,
+    canSendInput: Boolean,
+    onBack: () -> Unit,
+    onCwdChange: (String) -> Unit,
+    onCommandChange: (String) -> Unit,
+    onRun: () -> Unit,
+    onSendInput: () -> Unit,
+    onClear: () -> Unit
+) {
     val listState = rememberLazyListState()
 
     LaunchedEffect(terminalLines.size) {
@@ -294,255 +954,106 @@ fun OmniRemoteApp() {
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(gradient)
-            .padding(16.dp)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                text = "Omni Remote",
-                color = TextPrimary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 26.sp
-            )
-            Text(
-                text = "status: $status",
-                color = TextMuted,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Panel),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Connection", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = host,
-                            onValueChange = { host = it },
-                            label = { Text("Host") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            colors = darkFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = port,
-                            onValueChange = { port = it },
-                            label = { Text("Port") },
-                            modifier = Modifier.width(120.dp),
-                            singleLine = true,
-                            colors = darkFieldColors()
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = token,
-                        onValueChange = { token = it },
-                        label = { Text("Token") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        colors = darkFieldColors()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Switch(checked = secure, onCheckedChange = { secure = it })
-                        Text(
-                            text = "Secure (HTTPS/WSS) for Cloudflare or TLS",
-                            color = TextMuted,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { connectWebSocket() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                            enabled = !connected
-                        ) {
-                            Text("Connect")
-                        }
-                        Button(
-                            onClick = { disconnectWebSocket() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Warning),
-                            enabled = connected
-                        ) {
-                            Text("Disconnect")
-                        }
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    try {
-                                        status = "loading projects"
-                                        fetchProjects()
-                                        status = "projects loaded"
-                                    } catch (e: Exception) {
-                                        status = "error: ${e.message}"
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentAlt)
-                        ) {
-                            Text("Refresh Projects")
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Panel),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Terminal", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = cwd,
-                        onValueChange = { cwd = it },
-                        label = { Text("Working directory (optional)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        colors = darkFieldColors()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .border(BorderStroke(1.dp, Color(0xFF1F2937)), RoundedCornerShape(10.dp))
-                            .background(Color(0xFF0B0F14), RoundedCornerShape(10.dp))
-                            .padding(8.dp)
-                    ) {
-                        LazyColumn(state = listState) {
-                            items(terminalLines) { line ->
-                                Text(
-                                    text = line.trimEnd(),
-                                    color = TerminalGreen,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = command,
-                        onValueChange = { command = it },
-                        label = { Text("Command") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        colors = darkFieldColors()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                sendRun(command)
-                                command = ""
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                        ) {
-                            Text("Run")
-                        }
-                        Button(
-                            onClick = {
-                                sendStdin(command + "\n")
-                                command = ""
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentAlt),
-                            enabled = activeSessionId != null
-                        ) {
-                            Text("Send Input")
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Panel),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Projects", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    if (projects.isEmpty()) {
-                        Text("No projects loaded", color = TextMuted, fontSize = 12.sp)
-                    } else {
-                        LazyColumn(modifier = Modifier.height(180.dp)) {
-                            items(projects) { project ->
-                                ProjectRow(
-                                    project = project,
-                                    onActivate = {
-                                        scope.launch {
-                                            try {
-                                                status = "activating ${project.name}"
-                                                postProjectAction(project.name, "activate")
-                                                fetchProjects()
-                                                status = "activated"
-                                            } catch (e: Exception) {
-                                                status = "error: ${e.message}"
-                                            }
-                                        }
-                                    },
-                                    onDeactivate = {
-                                        scope.launch {
-                                            try {
-                                                status = "deactivating ${project.name}"
-                                                postProjectAction(project.name, "deactivate")
-                                                fetchProjects()
-                                                status = "deactivated"
-                                            } catch (e: Exception) {
-                                                status = "error: ${e.message}"
-                                            }
-                                        }
-                                    }
-                                )
-                                Divider(color = Color(0xFF1F2937))
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Panel),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Remote Desktop", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(6.dp))
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(title = "Terminal", status = status, onBack = onBack)
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = cwd,
+            onValueChange = onCwdChange,
+            label = { Text("Working directory (optional)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            colors = darkFieldColors()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .border(BorderStroke(1.dp, Color(0xFF1F2937)), RoundedCornerShape(10.dp))
+                .background(Color(0xFF0B0F14), RoundedCornerShape(10.dp))
+                .padding(8.dp)
+        ) {
+            LazyColumn(state = listState) {
+                items(terminalLines) { line ->
                     Text(
-                        "Launch Chrome Remote Desktop for full GUI control.",
-                        color = TextMuted,
+                        text = line.trimEnd(),
+                        color = TerminalGreen,
+                        fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://remotedesktop.google.com/access"))
-                            context.startActivity(intent)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentAlt)
-                    ) {
-                        Text("Open Chrome Remote Desktop")
-                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = command,
+            onValueChange = onCommandChange,
+            label = { Text("Command") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            colors = darkFieldColors()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onRun,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                enabled = connected
+            ) {
+                Text("Run")
+            }
+            Button(
+                onClick = onSendInput,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentAlt),
+                enabled = connected && canSendInput
+            ) {
+                Text("Send Input")
+            }
+            Button(
+                onClick = onClear,
+                colors = ButtonDefaults.buttonColors(containerColor = Warning)
+            ) {
+                Text("Clear")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectsScreen(
+    status: String,
+    projects: List<Project>,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onActivate: (Project) -> Unit,
+    onDeactivate: (Project) -> Unit,
+    onOpenStudio: (Project) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(title = "Projects", status = status, onBack = onBack)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onRefresh,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text("Refresh")
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (projects.isEmpty()) {
+            Text("No projects loaded", color = TextMuted, fontSize = 12.sp)
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(projects) { project ->
+                    ProjectRow(
+                        project = project,
+                        onActivate = { onActivate(project) },
+                        onDeactivate = { onDeactivate(project) },
+                        onOpenStudio = { onOpenStudio(project) }
+                    )
+                    Divider(color = Color(0xFF1F2937))
                 }
             }
         }
@@ -550,14 +1061,76 @@ fun OmniRemoteApp() {
 }
 
 @Composable
-fun ProjectRow(project: Project, onActivate: () -> Unit, onDeactivate: () -> Unit) {
+private fun ScreenHeader(title: String, status: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column {
+            Text(
+                text = title,
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp
+            )
+            Text(
+                text = "status: $status",
+                color = TextMuted,
+                fontSize = 12.sp
+            )
+        }
+        Button(
+            onClick = onBack,
+            colors = ButtonDefaults.buttonColors(containerColor = AccentAlt)
+        ) {
+            Text("Back")
+        }
+    }
+}
+
+@Composable
+private fun ActionCard(
+    title: String,
+    subtitle: String,
+    buttonText: String,
+    buttonColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(title, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(subtitle, color = TextMuted, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(10.dp))
+            Button(
+                onClick = onClick,
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
+            ) {
+                Text(buttonText)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectRow(
+    project: Project,
+    onActivate: () -> Unit,
+    onDeactivate: () -> Unit,
+    onOpenStudio: () -> Unit
+) {
     val statusColor = if (project.status == "Local") Accent else Warning
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -573,20 +1146,30 @@ fun ProjectRow(project: Project, onActivate: () -> Unit, onDeactivate: () -> Uni
                 fontSize = 12.sp
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Button(
-                onClick = onActivate,
-                colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                enabled = project.status != "Local"
-            ) {
-                Text("Activate")
+        Column(horizontalAlignment = Alignment.End) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = onActivate,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    enabled = project.status != "Local"
+                ) {
+                    Text("Activate")
+                }
+                Button(
+                    onClick = onDeactivate,
+                    colors = ButtonDefaults.buttonColors(containerColor = Warning),
+                    enabled = project.status == "Local"
+                ) {
+                    Text("Deactivate")
+                }
             }
+            Spacer(modifier = Modifier.height(6.dp))
             Button(
-                onClick = onDeactivate,
-                colors = ButtonDefaults.buttonColors(containerColor = Warning),
+                onClick = onOpenStudio,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentAlt),
                 enabled = project.status == "Local"
             ) {
-                Text("Deactivate")
+                Text("Open Studio")
             }
         }
     }

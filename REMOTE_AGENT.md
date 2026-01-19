@@ -64,6 +64,23 @@ This keeps the agent bound to localhost but makes it reachable via HTTPS/WSS.
    - Secure (HTTPS/WSS): ON
    - Token: REMOTE_ACCESS_TOKEN
 
+## Firebase config sync (optional)
+
+The Android app can pull connection info from Firestore.
+
+1) Create a Firestore document:
+   - Collection: `omniremote`
+   - Document: `connection`
+   - Fields (string/bool):
+     - `url` (optional) e.g. `https://your-tunnel.trycloudflare.com`
+     - `host` (optional) e.g. `your-tunnel.trycloudflare.com`
+     - `port` (optional) e.g. `443` or empty
+     - `secure` (optional) true/false
+
+2) In the app, sign in with Firebase Auth (email/password), then use **Fetch Cloud** on the Setup screen.
+
+Token is intentionally not synced from Firestore. Keep it manual or stored locally.
+
 ## Security notes
 - Do not expose the port directly to the public internet.
 - Use a VPN like Tailscale/ZeroTier for remote access outside your LAN.

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build artifacts
+build/
+dist/
+
+# Runtime/local config
+config/remote_agent.log
+config/project_registry.json
+secrets.env
+
+# Android Studio/Gradle
+.idea/
+*.iml
+omni_remote_android/.gradle/
+omni_remote_android/app/build/
+omni_remote_android/keystore.properties
+omni_remote_android/keystore/
+omni_remote_android/deployment_cert.der
+omni_remote_android/google-services.json
+
+# Plugin build output
+omni_remote_studio_plugin/.gradle/
+omni_remote_studio_plugin/build/
+omni_remote_studio_plugin/build_plugin.log
+
+# Installer output
+installer/dist/

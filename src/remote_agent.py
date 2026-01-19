@@ -9,6 +9,7 @@ import stat
 import subprocess
 import threading
 import uuid
+import sys
 from typing import Dict, Optional
 
 from dotenv import load_dotenv
@@ -17,7 +18,14 @@ from fastapi.responses import JSONResponse
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def get_base_dir() -> str:
+    # When packaged (PyInstaller), anchor config next to the executable.
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+BASE_DIR = get_base_dir()
 ENV_PATH = os.path.join(BASE_DIR, "secrets.env")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
@@ -242,6 +250,33 @@ def copy_tree(src: str, dst: str) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True)
 
 
+def find_android_studio() -> Optional[str]:
+    candidates = [
+        r"C:\Program Files\Android\Android Studio\bin\studio64.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Android Studio\bin\studio64.exe"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def open_studio_project(name: str) -> Dict[str, str]:
+    project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name)
+    if not os.path.exists(project_path):
+        return {"status": "error", "message": "Project not found"}
+    if not is_path_safe(project_path):
+        return {"status": "error", "message": "Unsafe project path"}
+    studio = find_android_studio()
+    if not studio:
+        return {"status": "error", "message": "Android Studio not found"}
+    try:
+        subprocess.Popen([studio, project_path], shell=True)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "message": "Studio launched"}
+
+
 def deactivate_project(name: str) -> Dict[str, str]:
     lock = get_project_lock(name)
     with lock:
@@ -386,6 +421,15 @@ async def api_activate_project(name: str, request: Request):
 async def api_deactivate_project(name: str, request: Request):
     require_token_from_request(request)
     result = deactivate_project(name)
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+@app.post("/api/projects/{name}/open-studio")
+async def api_open_studio_project(name: str, request: Request):
+    require_token_from_request(request)
+    result = open_studio_project(name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "438106999202",
+    "project_id": "omniremote-e7afd",
+    "storage_bucket": "omniremote-e7afd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:438106999202:android:746469b3afb338459dcafb",
+        "android_client_info": {
+          "package_name": "com.damiennichols.omniremote"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

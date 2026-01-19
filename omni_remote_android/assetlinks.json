@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.damiennichols.omniremote",
+      "sha256_cert_fingerprints": [
+        "F8:D2:98:1D:52:5E:33:F5:81:E5:CE:79:BE:CC:5A:F0:41:06:0A:17:87:3E:DE:CA:22:F3:10:79:91:77:C5:A6"
+      ]
+    }
+  }
+]
