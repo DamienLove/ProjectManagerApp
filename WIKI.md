@@ -1,57 +1,95 @@
-﻿# Omni Project Remote Wiki
+﻿# Omni Project Remote - Detailed Technical Wiki
 
-## Installation Guide
+Welcome to the comprehensive technical documentation for Omni Project Remote.
 
-### Omni Remote Agent (Windows)
-The Remote Agent is the core of the system. It needs to be running on the computer where your projects are located.
+## 🏗️ System Architecture
 
-#### Option A: Windows Installer (Recommended)
-1. Download OmniRemoteAgentSetup.exe from the latest release.
-2. Run the installer and follow the instructions.
-3. Once installed, navigate to the installation directory (usually C:\Program Files (x86)\OmniRemoteAgent).
-4. Copy secrets.env.template to secrets.env and fill in your REMOTE_ACCESS_TOKEN.
+Omni Project Remote consists of three decoupled components communicating over a secure REST and WebSocket API.
 
-#### Option B: Portable Executable
-1. Download OmniRemoteAgentPortable.exe.
-2. Place it in a folder of your choice.
-3. Place a secrets.env file in the same folder.
-4. Run the executable.
+1.  **Remote Agent**: A FastAPI-based Python server running on Windows.
+2.  **Android Client**: A native Kotlin application built with Jetpack Compose.
+3.  **Studio Plugin**: A Kotlin-based IntelliJ IDEA / Android Studio plugin.
 
-#### Option C: From Source
-1. Clone the repository.
-2. Install dependencies: pip install -r requirements.txt.
-3. Configure secrets.env.
-4. Run python src/remote_agent.py.
+---
 
-### Omni Remote Android App
-1. Download OmniProjectRemote.APK.
-2. Enable "Install from Unknown Sources" on your device if necessary.
-3. Open the APK to install.
-4. Upon launching, navigate to the **Setup** screen.
-5. Enter your PC's IP address (or Cloudflare Tunnel URL), port, and the access token defined in your secrets.env.
+## 🖥️ Remote Agent Deep Dive
 
-### Android Studio Plugin
-1. Download AndroidStudioPlugin.ZIP.
-2. In Android Studio, go to File > Settings (or Android Studio > Settings on macOS).
-3. Select Plugins.
-4. Click the gear icon and select Install Plugin from Disk....
-5. Select the downloaded ZIP file and restart the IDE.
+The agent is the brain of the operation. It manages the project lifecycle and provides the bridge to the Windows shell.
 
-## Usage Instructions
+### Configuration (secrets.env)
+The agent uses a .env file for all sensitive settings:
+- REMOTE_ACCESS_TOKEN: The primary security key.
+- LOCAL_WORKSPACE_ROOT: Where your "Local" projects live (e.g., C:\Projects).
+- DRIVE_ROOT_FOLDER_ID: The local path to your synced Cloud storage (e.g., G:\My Drive\projects).
+- REMOTE_ALLOWED_ROOTS: A whitelist of directory paths the agent is allowed to interact with.
 
-### Connecting the App
-- Ensure the Remote Agent is running on your PC.
-- In the Android app, use the **Test Connection** button to verify the link.
-- You can use **Fetch Cloud** if you have configured Firebase sync (see REMOTE_AGENT.md for details).
+### Project Lifecycle
+When you **Activate** a project:
+1.  The agent copies the project from the "Cloud" path to the "Local" path.
+2.  It scans for an omni.json manifest.
+3.  **External Resources**: Restores any assets that were moved out of the project folder to save sync space.
+4.  **Auto-Software**: Checks for required software IDs in the manifest and installs them via winget if missing.
 
-### Managing Projects
-- Once connected, the app will list all projects managed by OmniProjectSync.
-- You can activate/deactivate projects with a single tap.
+When you **Deactivate** a project:
+1.  It identifies external resources and moves them to a local _omni_assets folder to prevent them from being uploaded to the cloud unnecessarily.
+2.  The project folder is copied to the "Cloud" path.
+3.  The local copy is safely removed.
 
 ### Remote Terminal
-- Access the terminal tab in the Android app to execute CLI commands on your PC remotely.
-- This is useful for triggering builds, running scripts, or interacting with the Gemini/Claude CLI.
+The terminal uses WebSockets for real-time interaction.
+- **Output**: Captured from stdout and stderr and streamed to the client.
+- **Stdin**: Allows sending input to interactive commands (like a "yes/no" prompt or an LLM CLI).
+- **Sessions**: Each command runs in its own session, which can be monitored or cancelled.
 
-## Troubleshooting
-- **Connection Failed**: Check if your firewall is blocking the port (default 8765). Ensure you are on the same network or using a tunnel.
-- **Unauthorized**: Double-check that the REMOTE_ACCESS_TOKEN in the app matches the one in your secrets.env.
+---
+
+## 📱 Android Client Usage
+
+### Authentication
+- **Firebase Auth**: The app requires a specific authorized email to sign in.
+- **Fetch Cloud**: Once signed in, the app can pull your workstation's IP and connection settings from a Firestore document (omniremote/connection).
+
+### Terminal Interactions
+- **Run**: Starts a new command.
+- **Send Input**: Sends the current text in the command field to the *active* session's stdin.
+- **Clear**: Wipes the local terminal buffer.
+
+### Projects View
+- Lists all projects found in your local and cloud directories.
+- **Open Studio**: Sends a request to the agent to launch the project in Android Studio on the PC.
+
+---
+
+## 🔌 IDE Plugin (Android Studio / IntelliJ)
+
+The plugin provides a side-panel for managing the system without leaving your code.
+
+### Installation
+1.  Navigate to Settings -> Plugins.
+2.  Click the ⚙️ icon -> Install Plugin from Disk....
+3.  Select AndroidStudioPlugin.ZIP.
+
+### Features
+- **Project List**: Synchronized view of your projects.
+- **Embedded Terminal**: Run remote commands directly from the IDE.
+- **Quick-Test**: Verify connectivity to your remote agent with a single button.
+
+---
+
+## 🔒 Security Best Practices
+
+1.  **Use a Tunnel**: We highly recommend **Cloudflare Tunnels**. It allows the agent to stay on 127.0.0.1 while being reachable via a secure https:// and wss:// URL.
+2.  **Long Tokens**: Use a 32+ character string for REMOTE_ACCESS_TOKEN.
+3.  **Whitelist Paths**: Only include paths in REMOTE_ALLOWED_ROOTS that you actually need to manage.
+4.  **Firewall**: If not using a tunnel, ensure your Windows Firewall only allows the REMOTE_PORT on your LAN.
+
+## 🛠️ Manifest File (omni.json)
+Create an omni.json in your project root to enable advanced features:
+`json
+{
+  "software": ["Git.Git", "NodeJS.LTS"],
+  "external_paths": ["C:\\LargeAssets\\Project1"]
+}
+`
+- software: List of WinGet IDs to ensure are installed.
+- external_paths: Paths that should be "detached" during cloud sync to save space/time.
