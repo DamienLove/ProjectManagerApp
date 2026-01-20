@@ -553,14 +553,20 @@ class ProjectManagerApp(ctk.CTk):
         hidden.extend(["projectmanagerapp", "$recycle.bin"])       
 
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
+
         registry = {}
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
+
+        initial_registry = registry.copy()
+
         for f in local_folders: registry[f] = "Local"
         for name in list(registry.keys()):
             if name not in local_folders:
                 registry[name] = "Cloud"
-        self._save_reg(registry)
+
+        if registry != initial_registry:
+            self._save_reg(registry)
 
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
