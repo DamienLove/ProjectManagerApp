@@ -400,7 +400,7 @@ async def health(request: Request):
 @app.get("/api/projects")
 async def get_projects(request: Request):
     require_token_from_request(request)
-    registry = compute_registry()
+    registry = await run_in_threadpool(compute_registry)
     projects = []
     for name, status in sorted(registry.items()):
         if name.lower() in HIDDEN_PROJECTS:
