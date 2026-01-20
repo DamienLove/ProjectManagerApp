@@ -1,34 +1,35 @@
 ﻿# Omni Project Remote
 
-A comprehensive suite for managing and accessing your projects remotely. This project consists of three main components:
+A comprehensive suite for managing and accessing your projects remotely. This project consists of three main components that work together in a flexible, dual-host architecture.
 
-1.  **Omni Remote Agent (Python/Windows)**: A backend service that runs on your workstation, providing a secure API to manage projects and a remote terminal.
-2.  **Omni Remote Android App (Kotlin)**: A mobile client that connects to the Remote Agent, allowing you to manage projects and run commands from your phone.
-3.  **Omni Remote Studio Plugin (IntelliJ/Android Studio)**: A plugin for your IDE to integrate remote management directly into your development workflow.
+## 🏗️ Architecture
+Omni Project Remote allows you to control your workstation from your phone using two different hosting methods:
+1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
+2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
 ## 📥 Downloads (V2 Alpha)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
 | **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniProjectRemote.apk) | Mobile Client |
-| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentSetup.exe) | **Recommended** Installer |
-| **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentPortable.exe) | No-install Portable version |
-| **Remote Agent** | [OmniRemoteAgent.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgent.exe) | Standalone Executable |
-| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/AndroidStudioPlugin.zip) | For Android Studio / IntelliJ |
-| **Config** | [secrets.env.template](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/secrets.env.template) | Required Configuration Template |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/AndroidStudioPlugin.zip) | **New: Includes Host Mode** |
+| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentSetup.exe) | Standalone Installer |
+| **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentPortable.exe) | No-install version |
 
 ## Quick Start
 
-### 1. Remote Agent (Workstation)
-- **Installer**: Download `OmniRemoteAgentSetup.exe` and follow the prompts.
-- **Config**: Create a `secrets.env` file in the same directory as the executable (use `secrets.env.template` as a base).
+### 1. IDE Host (Fastest)
+- Install the AndroidStudioPlugin.zip in your IDE.
+- Open the **Omni Remote** side panel.
+- Go to the **Host Mode** tab, set a token, and click **Start Host**.
 
-### 2. Android App (Mobile)
-- Download `OmniProjectRemote.apk` and install it on your Android device.
-- Configure the Host, Port, and Access Token in the app settings.
+### 2. Standalone Agent
+- Download OmniRemoteAgentSetup.exe and follow the prompts.
+- Configure your secrets.env with a REMOTE_ACCESS_TOKEN.
 
-### 3. IDE Plugin
-- In Android Studio/IntelliJ, go to `Settings` -> `Plugins` -> `Install Plugin from Disk...` and select `AndroidStudioPlugin.zip`.
+### 3. Android App
+- Install OmniProjectRemote.apk on your phone.
+- Enter the IP of your PC and the token you set in either the IDE or the Standalone Agent.
 
 ## Documentation
-For detailed installation and usage instructions, please refer to the [Wiki](https://github.com/DamienLove/ProjectManagerApp/wiki).
+For detailed technical info, visit the [Wiki](https://github.com/DamienLove/ProjectManagerApp/wiki).
