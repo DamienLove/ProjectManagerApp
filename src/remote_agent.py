@@ -447,11 +447,20 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
     log(f"Command: {cmd} (cwd={cwd})")
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
-        output = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
+
+        output = stdout_str + ("\n" + stderr_str if stderr_str else "")
         if len(output) > 20000:
             output = output[:20000] + "\n...truncated..."
-        return {"status": "ok", "code": res.returncode, "output": output}
+        return {"status": "ok", "code": proc.returncode, "output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
