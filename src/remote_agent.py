@@ -66,6 +66,8 @@ _sessions: Dict[str, "CommandSession"] = {}
 _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
 
+_registry_lock = threading.Lock()
+
 
 def log(msg: str) -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -141,19 +143,20 @@ def save_registry(registry: Dict[str, str]) -> None:
 
 
 def compute_registry() -> Dict[str, str]:
-    os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
-    local_folders = {
-        f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
-        if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
-    }
-    registry = load_registry()
-    for name in local_folders:
-        registry[name] = "Local"
-    for name in list(registry.keys()):
-        if name not in local_folders:
-            registry[name] = "Cloud"
-    save_registry(registry)
-    return registry
+    with _registry_lock:
+        os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
+        local_folders = {
+            f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
+            if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
+        }
+        registry = load_registry()
+        for name in local_folders:
+            registry[name] = "Local"
+        for name in list(registry.keys()):
+            if name not in local_folders:
+                registry[name] = "Cloud"
+        save_registry(registry)
+        return registry
 
 
 def force_remove_readonly(func, path, excinfo):
@@ -412,7 +415,8 @@ async def get_projects(request: Request):
 @app.post("/api/projects/{name}/activate")
 async def api_activate_project(name: str, request: Request):
     require_token_from_request(request)
-    result = activate_project(name)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, activate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
