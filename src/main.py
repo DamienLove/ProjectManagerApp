@@ -1,4 +1,4 @@
-﻿import customtkinter as ctk
+import customtkinter as ctk
 import os
 import threading
 import time
@@ -13,6 +13,7 @@ import subprocess
 import json
 import hashlib
 import tempfile
+import queue
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
@@ -24,8 +25,8 @@ LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
 ASSET_PATH = os.path.join(BASE_DIR, "assets")
 ICON_PATH = os.path.join(ASSET_PATH, "app_icon.png")
 
-DEFAULT_WORKSPACE = r"C:\Projects"
-PROTECTED_PATHS = [r"C:\Windows", r"C:\Program Files", r"C:\Program Files (x86)", r"C:\Users", r"C:\\"]
+DEFAULT_WORKSPACE = r"C:\\Projects"
+PROTECTED_PATHS = [r"C:\\Windows", r"C:\\Program Files", r"C:\\Program Files (x86)", r"C:\\Users", r"C:\\\"]   
 
 # Cloud/portable behavior
 CLOUD_META_DIRNAME = "_omni_sync"
@@ -42,7 +43,7 @@ ctk.set_default_color_theme("blue")
 
 # --- UTILS ---
 def force_remove_readonly(func, path, excinfo):
-    """Handler for shutil.rmtree to unlock Git/Read-only files.""" 
+    """Handler for shutil.rmtree to unlock Git/Read-only files."""
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
@@ -82,7 +83,7 @@ class LoginWindow(ctk.CTkToplevel):
         self.email_entry.pack(fill="x", padx=20)
 
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
-        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
+        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")        
         self.password_entry.pack(fill="x", padx=20)
 
         ctk.CTkButton(self, text="Login", command=self.login).pack(pady=20)
@@ -106,7 +107,7 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=40)
         self.btn_confirm.pack(fill="x", padx=20, pady=10)
-        threading.Thread(target=self._scan, daemon=True).start()   
+        threading.Thread(target=self._scan, daemon=True).start()
     def _scan(self):
         try:
             res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
@@ -141,19 +142,19 @@ class ProjectConfigWindow(ctk.CTkToplevel):
     def _init_ui(self):
         t = ctk.CTkTabview(self); t.pack(fill="both", expand=True, padx=10, pady=10)
         tf = t.add("📁 External Files"); ts = t.add("💾 Software"); ta = t.add("⚙️ App State")
-        self.scroll_files = ctk.CTkScrollableFrame(tf); self.scroll_files.pack(fill="both", expand=True)
-        f_add = ctk.CTkFrame(tf); f_add.pack(fill="x", pady=5)     
+        self.scroll_files = ctk.CTkScrollableFrame(tf); self.scroll_files.pack(fill="both", expand=True)  
+        f_add = ctk.CTkFrame(tf); f_add.pack(fill="x", pady=5)
         self.entry_path = ctk.CTkEntry(f_add, placeholder_text="C:\\Path\\To\\External\\Folder"); self.entry_path.pack(side="left", expand=True, fill="x", padx=5)
         ctk.CTkButton(f_add, text="Add", width=80, command=self.add_path).pack(side="right")
-        self.scroll_soft = ctk.CTkScrollableFrame(ts); self.scroll_soft.pack(fill="both", expand=True)
-        s_add = ctk.CTkFrame(ts); s_add.pack(fill="x", pady=5)     
+        self.scroll_soft = ctk.CTkScrollableFrame(ts); self.scroll_soft.pack(fill="both", expand=True)    
+        s_add = ctk.CTkFrame(ts); s_add.pack(fill="x", pady=5)
         self.entry_soft = ctk.CTkEntry(s_add, placeholder_text="Software ID..."); self.entry_soft.pack(side="left", expand=True, fill="x", padx=5)
         ctk.CTkButton(s_add, text="Browse", width=80, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
-        ctk.CTkButton(s_add, text="Add ID", width=80, command=self.add_software_id).pack(side="right")
+        ctk.CTkButton(s_add, text="Add ID", width=80, command=self.add_software_id).pack(side="right")    
         self.scroll_app_state = ctk.CTkScrollableFrame(ta); self.scroll_app_state.pack(fill="both", expand=True)
         a_add = ctk.CTkFrame(ta); a_add.pack(fill="x", pady=5)
         self.entry_app_state_path = ctk.CTkEntry(a_add, placeholder_text="C:\\Users\\...\\AppData\\Roaming\\..._profile"); self.entry_app_state_path.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(a_add, text="Add", width=80, command=self.add_app_state_path).pack(side="right")
+        ctk.CTkButton(a_add, text="Add", width=80, command=self.add_app_state_path).pack(side="right")    
 
     def _load_manifest(self):
         if os.path.exists(self.manifest_path):
@@ -165,8 +166,8 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         self._refresh()
 
     def _refresh(self):
-        for w in self.scroll_files.winfo_children(): w.destroy()   
-        for w in self.scroll_soft.winfo_children(): w.destroy()    
+        for w in self.scroll_files.winfo_children(): w.destroy()
+        for w in self.scroll_soft.winfo_children(): w.destroy()
         for w in self.scroll_app_state.winfo_children(): w.destroy()
         for p in self.data.get("external_paths",[]):
             r=ctk.CTkFrame(self.scroll_files, fg_color="transparent"); r.pack(fill="x")
@@ -185,7 +186,7 @@ class ProjectConfigWindow(ctk.CTkToplevel):
     def remove_path(self, p): self.data["external_paths"].remove(p); self.save_manifest()
     def add_software_id(self):
         s=self.entry_soft.get().strip()
-        if s and s not in self.data["software"]: self.data["software"].append(s); self.save_manifest()
+        if s and s not in self.data["software"]: self.data["software"].append(s); self.save_manifest()    
     def add_software_batch(self, ids):
         for i in ids:
             if i not in self.data["software"]: self.data["software"].append(i)
@@ -205,7 +206,7 @@ class ProjectConfigWindow(ctk.CTkToplevel):
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, env):
-        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x550"); self.entries={} 
+        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x550"); self.entries={}
         self.fields = [("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"), ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"), ("GitHub Token","GITHUB_TOKEN"), ("Hidden Projects","HIDDEN_PROJECTS")]
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         for l,k in self.fields:
@@ -217,7 +218,8 @@ class SettingsWindow(ctk.CTkToplevel):
         if os.path.exists(self.env):
             with open(self.env) as f:
                 d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in f if "=" in l and not l.startswith("#")}
-                for l,k in self.fields: self.entries[k].insert(0, d.get(k,""))
+                for l,k in self.fields: 
+                    if k in self.entries: self.entries[k].insert(0, d.get(k,""))
     def save(self):
         with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
         self.parent._sync_settings_to_cloud()
@@ -300,7 +302,7 @@ class PopupMenu(ctk.CTkToplevel):
 
             self.geometry(f"{req_w}x{req_h}+{x}+{y}")
         except Exception:
-            self.geometry(f"+0+0")
+            self.geometry("+0+0")
 
     def _invoke(self, cmd):
         self.destroy()
@@ -325,20 +327,20 @@ class CollapsibleFrame(ctk.CTkFrame):
         super().__init__(parent)
         self.columnconfigure(0, weight=1)
         self.expanded = False
-        
+
         self.header = ctk.CTkFrame(self, fg_color="transparent")
         self.header.grid(row=0, column=0, sticky="ew")
         self.header.bind("<Button-1>", self.toggle)
-        
+
         self.lbl_title = ctk.CTkLabel(self.header, text=f"▶ {title}", font=("", 12, "bold"))
         self.lbl_title.pack(side="left", padx=5)
         self.lbl_title.bind("<Button-1>", self.toggle)
-        
+
         self.content = ctk.CTkFrame(self)
-    
+
     def toggle(self, event=None):
         self.expanded = not self.expanded
-        self.lbl_title.configure(text=f"{'▼' if self.expanded else '▶'} {self.lbl_title.cget('text')[2:]}")
+        self.lbl_title.configure(text=f"{('▼' if self.expanded else '▶')} {self.lbl_title.cget('text')[2:]}")
         if self.expanded: self.content.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
         else: self.content.grid_forget()
 
@@ -350,19 +352,19 @@ class ProjectCard(ctk.CTkFrame):
         self.status = status
         self.expanded = False
         self.busy = False
-        
+
         self.pack(fill="x", pady=2, padx=2)
-        
+
         # Header
         self.header = ctk.CTkFrame(self, fg_color="transparent")
         self.header.pack(fill="x", padx=5, pady=5)
         self.header.bind("<Button-1>", self.toggle)
-        
+
         self.update_visual_state()
-        
+
         # Controls (Hidden by default)
         self.controls = ctk.CTkFrame(self, fg_color="transparent")
-        
+
     def toggle(self, event=None):
         if self.busy:
             return
@@ -424,48 +426,63 @@ class ProjectManagerApp(ctk.CTk):
         self.tray_icon = None
         self._cloud_meta_error_logged = False
         self._portable_cleanup_scheduled = False
+        self.queue = queue.Queue()
         self.withdraw() # Hide main window initially
 
         self.login_window = LoginWindow(self)
+        self._check_queue()
+
+    def _check_queue(self):
+        try:
+            while True:
+                task = self.queue.get_nowait()
+                if task == "deiconify":
+                    self.deiconify()
+                    bring_to_front(self)
+                elif task == "quit":
+                    self.on_close()
+        except queue.Empty:
+            pass
+        self.after(200, self._check_queue)
 
     def show_main_app(self):
         self.deiconify() # Show main window
         self._init_compact_ui()
-        # self._start_tray_icon()
-        
-        if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR) 
+        self._start_tray_icon()
+
+        if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR)
         self.reload_config()
 
     def _init_compact_ui(self):
         # 1. Header
         header = ctk.CTkFrame(self, height=50, corner_radius=0)
         header.pack(fill="x", side="top")
-        
-        ctk.CTkLabel(header, text=APP_NAME, font=("", 16, "bold")).pack(side="left", padx=15, pady=10)
-        
+
+        ctk.CTkLabel(header, text=APP_NAME, font=("", 16, "bold")).pack(side="left", padx=15, pady=10)    
+
         # Menu Button (Settings/Quit)
         self.menu_btn = ctk.CTkButton(header, text="☰", width=40, command=self.show_menu)
         self.menu_btn.pack(side="right", padx=10)
-        
+
         # 2. Main List
         self.project_list = ctk.CTkScrollableFrame(self)
         self.project_list.pack(fill="both", expand=True, padx=5, pady=5)
         self.project_cards = {}
-        
+
         # 3. Footer
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", side="bottom", padx=5, pady=5)
-        
-        ctk.CTkButton(footer, text="➕ New Project", command=self.show_new_project).pack(fill="x", pady=2)
-        
+
+        ctk.CTkButton(footer, text="+ New Project", command=self.show_new_project).pack(fill="x", pady=2)
+
         # Activity Log (Collapsible)
         self.log_container = CollapsibleFrame(footer, title="Activity Log")
         self.log_container.pack(fill="x", pady=2)
-        
-        self.log_box = ctk.CTkTextbox(self.log_container.content, height=100, font=("Consolas", 10))
+
+        self.log_box = ctk.CTkTextbox(self.log_container.content, height=100, font=("Consolas", 10))      
         self.log_box.pack(fill="x", padx=2, pady=2)
         self.log_box.configure(state="disabled")
-        
+
         self.progress_bar = ctk.CTkProgressBar(footer, height=10, progress_color="#22c55e")
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=(5,0))
@@ -597,7 +614,7 @@ class ProjectManagerApp(ctk.CTk):
             '$env:PORTABLE_MODE = "1"\n'
             '$env:PORTABLE_ROOT = $root\n'
             '$venv = Join-Path $root ".venv"\n'
-            '$python = Join-Path $venv "Scripts\\\\python.exe"\n'
+            '$python = Join-Path $venv "Scripts\\python.exe"\n'
             'if (-not (Test-Path $python)) {\n'
             '    Write-Host "Creating portable venv..."\n'
             '    $py = Get-Command py -ErrorAction SilentlyContinue\n'
@@ -605,7 +622,7 @@ class ProjectManagerApp(ctk.CTk):
             '    & $python -m pip install --upgrade pip\n'
             '    & $python -m pip install -r (Join-Path $root "requirements.txt")\n'
             '}\n'
-            '& $python (Join-Path $root "src\\\\main.py")\n'
+            '& $python (Join-Path $root "src\\main.py")\n'
         )
         cmd = (
             "@echo off\n"
@@ -722,11 +739,11 @@ class ProjectManagerApp(ctk.CTk):
 
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
-        
+
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
         hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
-        hidden.extend(["projectmanagerapp", "$recycle.bin"])       
+        hidden.extend(["projectmanagerapp", "$recycle.bin"])
 
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
 
@@ -750,13 +767,6 @@ class ProjectManagerApp(ctk.CTk):
             # Create Card
             card = ProjectCard(self.project_list, self, name, status)
             self.project_cards[name] = card
-
-    # --- Methods removed/consolidated ---
-    # _init_sidebar, _init_main_area, _init_activity_log, _create_project_card, _add_sidebar_link 
-    # are replaced by _init_compact_ui and ProjectCard class.
-
-
-    # --- ADVANCED TRANSFER LOGIC ---
 
     def deactivate_project(self, name):
         card = self.project_cards.get(name)
@@ -796,18 +806,18 @@ class ProjectManagerApp(ctk.CTk):
         total_files = 0
         for root, dirs, files in os.walk(src):
             total_files += len(files)
-        
+
         copied_files = 0
-        
+
         def copy_progress(s, d):
             nonlocal copied_files
             shutil.copy2(s, d)
             copied_files += 1
-            
+
             # Update visual progress bar and log text
             pct = copied_files / total_files if total_files > 0 else 0
             self.after(0, lambda: self.progress_bar.set(pct))
-            
+
             if copied_files % max(1, int(total_files / 10)) == 0:
                  pct_int = int(pct * 100)
                  self.after(0, lambda: self.log(f"   ⏳ Syncing... {pct_int}% ({copied_files}/{total_files})"))
@@ -829,7 +839,7 @@ class ProjectManagerApp(ctk.CTk):
 
             # 3. Force Delete Local
             self.log(f"🗑️ Cleaning local storage (Force unlocking Git)...")
-            shutil.rmtree(src, onerror=force_remove_readonly)      
+            shutil.rmtree(src, onerror=force_remove_readonly)
 
             self.log(f"✅ {name} Offloaded Successfully.")
             reg = self._load_reg(); reg[name] = "Cloud"; self._save_reg(reg)
@@ -879,7 +889,7 @@ class ProjectManagerApp(ctk.CTk):
             self._check_install_software(dst)
 
             # Delete Backup (Only if you want it moved, otherwise comment this)
-            # shutil.rmtree(src, onerror=force_remove_readonly)    
+            # shutil.rmtree(src, onerror=force_remove_readonly)
 
             self.log(f"✅ {name} Restored & Ready.")
             reg = self._load_reg(); reg[name] = "Local"; self._save_reg(reg)
@@ -892,8 +902,8 @@ class ProjectManagerApp(ctk.CTk):
         manifest = os.path.join(project_path, "omni.json")
         if not os.path.exists(manifest): return
         with open(manifest, "r") as f: data = json.load(f)
-        assets_dir = os.path.join(project_path, "_omni_assets")    
-        if not os.path.exists(assets_dir): os.makedirs(assets_dir) 
+        assets_dir = os.path.join(project_path, "_omni_assets")
+        if not os.path.exists(assets_dir): os.makedirs(assets_dir)
 
         # Load existing restore map or create a new one
         map_file = os.path.join(assets_dir, "restore_map.json")
@@ -918,8 +928,8 @@ class ProjectManagerApp(ctk.CTk):
         self._save_json(map_file, restore_map)
 
     def _restore_project_resources(self, project_path):
-        assets_dir = os.path.join(project_path, "_omni_assets")    
-        map_file = os.path.join(assets_dir, "restore_map.json")    
+        assets_dir = os.path.join(project_path, "_omni_assets")
+        map_file = os.path.join(assets_dir, "restore_map.json")
         if not os.path.exists(map_file): return
 
         restore_map = self._load_json(map_file)
@@ -956,9 +966,9 @@ class ProjectManagerApp(ctk.CTk):
             self.log(f"   > Checking Software: {app}")
             try:
                 res = subprocess.run(["winget", "list", "-e", "--id", app], capture_output=True, text=True)
-                if "No installed package found" in res.stdout:     
-                    self.log(f"   ⬇️ Auto-Installing {app}...")    
-                    subprocess.run(["winget", "install", "-e", "--id", app, "--silent"], shell=True)
+                if "No installed package found" in res.stdout:
+                    self.log(f"   ⬇️ Auto-Installing {app}...")
+                    subprocess.run(["winget", "install", "-e", "--id", app, "--silent"], shell=True)      
             except: pass
 
     def _uninstall_software_if_unused(self, project_path, name):
@@ -976,7 +986,7 @@ class ProjectManagerApp(ctk.CTk):
         # Get all other active projects
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         all_projects = self._load_reg()
-        other_active_projects = [p for p, s in all_projects.items() if s == "Local" and p != name]
+        other_active_projects = [p for p, s in all_projects.items() if s == "Local" and p != name]        
 
         # Get all software dependencies from other active projects
         other_dependencies = set()
@@ -993,7 +1003,7 @@ class ProjectManagerApp(ctk.CTk):
             if app not in other_dependencies:
                 self.log(f"   > Uninstalling {app}...")
                 try:
-                    subprocess.run(["winget", "uninstall", "-e", "--id", app, "--silent"], shell=True)
+                    subprocess.run(["winget", "uninstall", "-e", "--id", app, "--silent"], shell=True)    
                 except Exception as e:
                     self.log(f"   > Failed to uninstall {app}: {e}", "red")
             else:
@@ -1002,7 +1012,7 @@ class ProjectManagerApp(ctk.CTk):
     # --- GUI ACTIONS ---
     def open_studio(self, n):
         p = os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), n)
-        for s in [r"C:\Program Files\Android\Android Studio\bin\studio64.exe", os.path.expandvars(r"%LOCALAPPDATA%\Android\Android Studio\bin\studio64.exe")]:
+        for s in [r"C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe", os.path.expandvars(r"%LOCALAPPDATA%\\Android\\Android Studio\\bin\\studio64.exe")]:
             if os.path.exists(s): subprocess.Popen([s, p], shell=True); return
         self.log("❌ Studio not found.", "red")
 
@@ -1011,10 +1021,10 @@ class ProjectManagerApp(ctk.CTk):
         except: pass
 
     def forget_project(self, name):
-        reg = self._load_reg(); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()
+        reg = self._load_reg(); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()        
 
     def log(self, m, col=None):
-        self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled") 
+        self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled")
 
     def on_close(self):
         if os.getenv(PORTABLE_AUTO_CLEAN_ENV, "").strip() == "1":
@@ -1025,15 +1035,15 @@ class ProjectManagerApp(ctk.CTk):
     def _start_tray_icon(self):
         try:
             img = Image.open(ICON_PATH)
-            items = [pystray.MenuItem("Show", lambda i, it: self.after(0, self.deiconify))]
+            items = [pystray.MenuItem("Show", lambda i, it: self.queue.put("deiconify"))]
             if self._is_portable_mode():
                 items.append(pystray.MenuItem("Deactivate + Cleanup", lambda i, it: self.deactivate_all_projects(cleanup=True, quit_after=True)))
-            items.append(pystray.MenuItem("Quit", lambda i, it: self.on_close()))
+            items.append(pystray.MenuItem("Quit", lambda i, it: self.queue.put("quit")))
             self.tray_icon = pystray.Icon("OmniSync", img, menu=pystray.Menu(*items))
             self.tray_icon.run_detached()
         except: pass
     def show_new_project(self):
-        d=ctk.CTkInputDialog(text="Name:", title="New Project"); bring_to_front(d, self); n=d.get_input()
+        d=ctk.CTkInputDialog(text="Name:", title="New Project"); bring_to_front(d, self); n=d.get_input() 
         if n: os.makedirs(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), n), exist_ok=True); self._refresh_projects()
 
 if __name__ == "__main__":
