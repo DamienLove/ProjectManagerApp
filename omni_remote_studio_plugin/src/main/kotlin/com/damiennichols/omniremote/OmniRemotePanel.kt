@@ -27,15 +27,18 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JPasswordField
 import javax.swing.JScrollPane
+import com.intellij.openapi.project.Project
 import javax.swing.JTabbedPane
 import javax.swing.JTextArea
 import javax.swing.JTextField
 import javax.swing.SwingUtilities
 
-class OmniRemotePanel : JPanel(BorderLayout()) {
-    private val MAX_TERMINAL_LINES = 2000
+class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
+      private val MAX_TERMINAL_LINES = 2000
+
     private val props = PropertiesComponent.getInstance()
     private val hostField = JTextField()
+    private val hostServer = HostServer(project) { msg -> logHostMessage(msg) }
     private val portField = JTextField()
     private val tokenField = JPasswordField()
     private val secureCheck = JCheckBox("Secure (HTTPS)")
@@ -67,8 +70,69 @@ class OmniRemotePanel : JPanel(BorderLayout()) {
         val tabs = JTabbedPane()
         tabs.addTab("Projects", buildProjectsPanel())
         tabs.addTab("Terminal", buildTerminalPanel())
+        tabs.addTab("Host Mode", buildHostModePanel())
         return tabs
     }
+
+    private fun buildHostModePanel(): JPanel {
+        val panel = JPanel(BorderLayout())
+        val hostPortField = JTextField("8766")
+        val hostTokenField = JPasswordField()
+        val startHostButton = JButton("Start Host")
+        val stopHostButton = JButton("Stop Host")
+        val hostLog = JTextArea()
+
+        hostLog.isEditable = false
+        hostLog.font = Font("Consolas", Font.PLAIN, 12)
+
+        val configPanel = JPanel(GridBagLayout())
+        val c = GridBagConstraints().apply {
+            fill = GridBagConstraints.HORIZONTAL
+            insets = Insets(4, 8, 4, 8)
+            weightx = 1.0
+        }
+
+        addRow(configPanel, c, 0, "Host Port", hostPortField)
+        addRow(configPanel, c, 1, "Host Token", hostTokenField)
+
+        c.gridy = 2
+        c.gridx = 0
+        configPanel.add(startHostButton, c)
+        c.gridx = 1
+        configPanel.add(stopHostButton, c)
+
+        startHostButton.addActionListener {
+            val port = hostPortField.text.toIntOrNull() ?: 8766
+            val token = String(hostTokenField.password)
+            if (token.isNotBlank()) {
+                hostServer.start(port, token)
+            } else {
+                logHostMessage("Token cannot be empty.")
+            }
+        }
+
+        stopHostButton.addActionListener {
+            hostServer.stop()
+        }
+
+        panel.add(configPanel, BorderLayout.NORTH)
+        panel.add(JScrollPane(hostLog), BorderLayout.CENTER)
+
+        // Find the JTextArea in the host panel to log messages
+        val logTextArea = (panel.getComponent(1) as JScrollPane).viewport.view as JTextArea
+        hostServerLog = logTextArea
+
+        return panel
+    }
+
+    private fun logHostMessage(message: String) {
+        SwingUtilities.invokeLater {
+            hostServerLog?.append("$message\n")
+        }
+    }
+
+    @Volatile
+    private var hostServerLog: JTextArea? = null
 
     private fun buildProjectsPanel(): JPanel {
         val panel = JPanel(BorderLayout())

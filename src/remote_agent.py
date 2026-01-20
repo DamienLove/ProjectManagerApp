@@ -15,6 +15,9 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+import firebase_admin
+from firebase_admin import credentials, firestore
+from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
@@ -57,6 +60,23 @@ if not REMOTE_ACCESS_TOKEN:
     print(REMOTE_ACCESS_TOKEN)
     print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
 
+# Initialize Firebase
+try:
+    if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        cred = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred, {
+            'projectId': os.getenv("FIREBASE_PROJECT_ID"),
+        })
+        db = firestore.client()
+        print("[remote-agent] Firebase initialized.")
+    else:
+        db = None
+        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+except Exception as e:
+    db = None
+    print(f"[remote-agent] Firebase initialization failed: {e}")
+
+
 app = FastAPI(title=APP_NAME, version=VERSION)
 
 _sessions_lock = threading.Lock()
@@ -64,6 +84,8 @@ _sessions: Dict[str, "CommandSession"] = {}
 
 _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
+
+_registry_lock = threading.Lock()
 
 
 def log(msg: str) -> None:
@@ -140,19 +162,20 @@ def save_registry(registry: Dict[str, str]) -> None:
 
 
 def compute_registry() -> Dict[str, str]:
-    os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
-    local_folders = {
-        f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
-        if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
-    }
-    registry = load_registry()
-    for name in local_folders:
-        registry[name] = "Local"
-    for name in list(registry.keys()):
-        if name not in local_folders:
-            registry[name] = "Cloud"
-    save_registry(registry)
-    return registry
+    with _registry_lock:
+        os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
+        local_folders = {
+            f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
+            if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
+        }
+        registry = load_registry()
+        for name in local_folders:
+            registry[name] = "Local"
+        for name in list(registry.keys()):
+            if name not in local_folders:
+                registry[name] = "Cloud"
+        save_registry(registry)
+        return registry
 
 
 def force_remove_readonly(func, path, excinfo):
@@ -399,7 +422,7 @@ async def health(request: Request):
 @app.get("/api/projects")
 async def get_projects(request: Request):
     require_token_from_request(request)
-    registry = compute_registry()
+    registry = await run_in_threadpool(compute_registry)
     projects = []
     for name, status in sorted(registry.items()):
         if name.lower() in HIDDEN_PROJECTS:
@@ -411,7 +434,8 @@ async def get_projects(request: Request):
 @app.post("/api/projects/{name}/activate")
 async def api_activate_project(name: str, request: Request):
     require_token_from_request(request)
-    result = activate_project(name)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, activate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
@@ -420,7 +444,7 @@ async def api_activate_project(name: str, request: Request):
 @app.post("/api/projects/{name}/deactivate")
 async def api_deactivate_project(name: str, request: Request):
     require_token_from_request(request)
-    result = deactivate_project(name)
+    result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
@@ -447,11 +471,22 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
     log(f"Command: {cmd} (cwd={cwd})")
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
-        output = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+        stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
+
+        output = stdout_str + ("\n" + stderr_str if stderr_str else "")
         if len(output) > 20000:
             output = output[:20000] + "\n...truncated..."
-        return {"status": "ok", "code": res.returncode, "output": output}
+        return {"status": "ok", "code": proc.returncode, "output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -536,5 +571,6 @@ async def ws_terminal(ws: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
+    sync_to_firestore()
     print(f"{APP_NAME} listening on {REMOTE_BIND_HOST}:{REMOTE_PORT}")
     uvicorn.run("remote_agent:app", host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)

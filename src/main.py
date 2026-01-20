@@ -68,6 +68,36 @@ def bring_to_front(win, parent=None):
 
 # --- UI WINDOWS ---
 
+class LoginWindow(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Login")
+        self.geometry("300x200")
+        bring_to_front(self, parent)
+        self.parent = parent
+        self.protocol("WM_DELETE_WINDOW", self.parent.quit)
+
+        ctk.CTkLabel(self, text="Email").pack(pady=(10,0))
+        self.email_entry = ctk.CTkEntry(self, placeholder_text="Enter your email")
+        self.email_entry.pack(fill="x", padx=20)
+
+        ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
+        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
+        self.password_entry.pack(fill="x", padx=20)
+
+        ctk.CTkButton(self, text="Login", command=self.login).pack(pady=20)
+
+    def login(self):
+        # Placeholder for real authentication
+        email = self.email_entry.get()
+        password = self.password_entry.get()
+        if email and password:
+            self.parent.show_main_app()
+            self.destroy()
+        else:
+            # You can add an error message here
+            pass
+
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
         super().__init__(parent); bring_to_front(self, parent); self.title("Browse Software"); self.geometry("700x650"); self.callback = callback; self.apps = []; self.selected_ids = set()
@@ -106,11 +136,11 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         super().__init__(parent); bring_to_front(self, parent); self.title(f"Config: {name}"); self.geometry("700x600")
         self.project_path = os.path.join(root, name)
         self.manifest_path = os.path.join(self.project_path, "omni.json")
-        self.data = {"external_paths":[], "software":[]}
+        self.data = {"external_paths":[], "software":[], "app_state_paths":[]}
         self._init_ui(); self._load_manifest()
     def _init_ui(self):
         t = ctk.CTkTabview(self); t.pack(fill="both", expand=True, padx=10, pady=10)
-        tf = t.add("📁 External Files"); ts = t.add("💾 Software") 
+        tf = t.add("📁 External Files"); ts = t.add("💾 Software"); ta = t.add("⚙️ App State")
         self.scroll_files = ctk.CTkScrollableFrame(tf); self.scroll_files.pack(fill="both", expand=True)
         f_add = ctk.CTkFrame(tf); f_add.pack(fill="x", pady=5)     
         self.entry_path = ctk.CTkEntry(f_add, placeholder_text="C:\\Path\\To\\External\\Folder"); self.entry_path.pack(side="left", expand=True, fill="x", padx=5)
@@ -120,21 +150,35 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         self.entry_soft = ctk.CTkEntry(s_add, placeholder_text="Software ID..."); self.entry_soft.pack(side="left", expand=True, fill="x", padx=5)
         ctk.CTkButton(s_add, text="Browse", width=80, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
         ctk.CTkButton(s_add, text="Add ID", width=80, command=self.add_software_id).pack(side="right")
+        self.scroll_app_state = ctk.CTkScrollableFrame(ta); self.scroll_app_state.pack(fill="both", expand=True)
+        a_add = ctk.CTkFrame(ta); a_add.pack(fill="x", pady=5)
+        self.entry_app_state_path = ctk.CTkEntry(a_add, placeholder_text="C:\\Users\\...\\AppData\\Roaming\\..._profile"); self.entry_app_state_path.pack(side="left", expand=True, fill="x", padx=5)
+        ctk.CTkButton(a_add, text="Add", width=80, command=self.add_app_state_path).pack(side="right")
+
     def _load_manifest(self):
         if os.path.exists(self.manifest_path):
             try:
                 with open(self.manifest_path, "r") as f: self.data = json.load(f)
             except: pass
+        if "app_state_paths" not in self.data:
+            self.data["app_state_paths"] = []
         self._refresh()
+
     def _refresh(self):
         for w in self.scroll_files.winfo_children(): w.destroy()   
         for w in self.scroll_soft.winfo_children(): w.destroy()    
+        for w in self.scroll_app_state.winfo_children(): w.destroy()
         for p in self.data.get("external_paths",[]):
             r=ctk.CTkFrame(self.scroll_files, fg_color="transparent"); r.pack(fill="x")
             ctk.CTkLabel(r, text=p).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_path(x)).pack(side="right")
         for s in self.data.get("software",[]):
             r=ctk.CTkFrame(self.scroll_soft, fg_color="transparent"); r.pack(fill="x")
             ctk.CTkLabel(r, text=s).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=s: self.remove_software(x)).pack(side="right")
+        for p in self.data.get("app_state_paths", []):
+            r = ctk.CTkFrame(self.scroll_app_state, fg_color="transparent"); r.pack(fill="x")
+            ctk.CTkLabel(r, text=p).pack(side="left")
+            ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_app_state_path(x)).pack(side="right")
+
     def add_path(self):
         p=self.entry_path.get().strip()
         if p and p not in self.data["external_paths"]: self.data["external_paths"].append(p); self.save_manifest()
@@ -147,6 +191,14 @@ class ProjectConfigWindow(ctk.CTkToplevel):
             if i not in self.data["software"]: self.data["software"].append(i)
         self.save_manifest()
     def remove_software(self, s): self.data["software"].remove(s); self.save_manifest()
+    def add_app_state_path(self):
+        p = self.entry_app_state_path.get().strip()
+        if p and p not in self.data["app_state_paths"]:
+            self.data["app_state_paths"].append(p)
+            self.save_manifest()
+    def remove_app_state_path(self, p):
+        self.data["app_state_paths"].remove(p)
+        self.save_manifest()
     def save_manifest(self):
         with open(self.manifest_path, "w") as f: json.dump(self.data, f, indent=4)
         self._refresh()
@@ -170,6 +222,101 @@ class SettingsWindow(ctk.CTkToplevel):
         with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
         self.parent._sync_settings_to_cloud()
         self.parent.reload_config(); self.destroy()
+
+class PopupMenu(ctk.CTkToplevel):
+    def __init__(self, parent, widget, menu_items):
+        super().__init__(parent)
+        self.widget = widget
+        self.withdraw()  # Hide initially
+
+        # Remove decorations and set on top
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+
+        # Colors (Light, Dark)
+        bg_color = ("#ffffff", "#1f2937")
+        border_color = ("#3b82f6", "#3b82f6")
+
+        self.frame = ctk.CTkFrame(self, fg_color=bg_color, corner_radius=6, border_width=2, border_color=border_color)
+        self.frame.pack(fill="both", expand=True)
+
+        for item in menu_items:
+            # item format: (text, command, fg_color, text_color)
+            text = item[0]
+            cmd = item[1]
+            fg = item[2] if len(item) > 2 else "transparent"
+            tc = item[3] if len(item) > 3 else ("black", "white")
+
+            # Hover color logic
+            hover = ("#e5e7eb", "#374151") if fg == "transparent" else None
+
+            btn = ctk.CTkButton(
+                self.frame,
+                text=text,
+                command=lambda c=cmd: self._invoke(c),
+                fg_color=fg,
+                text_color=tc,
+                anchor="w",
+                width=180,
+                height=35,
+                corner_radius=4,
+                hover_color=hover
+            )
+
+            btn.pack(fill="x", padx=5, pady=3)
+
+        self.update_idletasks()
+        self._position_window()
+        self.deiconify()
+
+        # Capture clicks
+        self.after(10, self._set_grab)
+
+    def _set_grab(self):
+        try:
+            self.grab_set()
+            self.focus_force()
+            self.bind("<Button-1>", self._check_click_outside)
+            self.bind("<Escape>", lambda e: self.destroy())
+        except Exception:
+            pass
+
+    def _position_window(self):
+        try:
+            root_x = self.widget.winfo_rootx()
+            root_y = self.widget.winfo_rooty()
+            btn_w = self.widget.winfo_width()
+            btn_h = self.widget.winfo_height()
+
+            req_w = self.winfo_reqwidth()
+            req_h = self.winfo_reqheight()
+
+            # Align right edge of menu with right edge of button
+            x = (root_x + btn_w) - req_w
+            # Ensure it doesn't go off the left side of the screen
+            if x < 0: x = root_x
+
+            y = root_y + btn_h + 5
+
+            self.geometry(f"{req_w}x{req_h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"+0+0")
+
+    def _invoke(self, cmd):
+        self.destroy()
+        if cmd: cmd()
+
+    def _check_click_outside(self, event):
+        x = event.x_root
+        y = event.y_root
+
+        wx = self.winfo_rootx()
+        wy = self.winfo_rooty()
+        ww = self.winfo_width()
+        wh = self.winfo_height()
+
+        if not (wx <= x <= wx + ww and wy <= y <= wy + wh):
+             self.destroy()
 
 # --- MAIN APPLICATION ---
 
@@ -202,6 +349,7 @@ class ProjectCard(ctk.CTkFrame):
         self.name = name
         self.status = status
         self.expanded = False
+        self.busy = False
         
         self.pack(fill="x", pady=2, padx=2)
         
@@ -210,17 +358,14 @@ class ProjectCard(ctk.CTkFrame):
         self.header.pack(fill="x", padx=5, pady=5)
         self.header.bind("<Button-1>", self.toggle)
         
-        icon = "☁️" if status == "Cloud" else "📂"
-        col = "#facc15" if status == "Cloud" else "#4ade80"
-        
-        self.lbl = ctk.CTkLabel(self.header, text=f"{icon} {name}", font=("", 14, "bold"), text_color=col)
-        self.lbl.pack(side="left")
-        self.lbl.bind("<Button-1>", self.toggle)
+        self.update_visual_state()
         
         # Controls (Hidden by default)
         self.controls = ctk.CTkFrame(self, fg_color="transparent")
         
     def toggle(self, event=None):
+        if self.busy:
+            return
         self.expanded = not self.expanded
         if self.expanded:
             self.controls.pack(fill="x", padx=5, pady=5)
@@ -242,7 +387,34 @@ class ProjectCard(ctk.CTkFrame):
             self._btn("❌ Forget", lambda: self.app.forget_project(self.name), "transparent", "red", border=1)
 
     def _btn(self, txt, cmd, bg="transparent", fg="white", border=0):
-        ctk.CTkButton(self.controls, text=txt, command=cmd, fg_color=bg, text_color=fg, border_width=border, height=25).pack(fill="x", pady=2)
+        btn = ctk.CTkButton(self.controls, text=txt, command=cmd, fg_color=bg, text_color=fg, border_width=border, height=25)
+        btn.pack(fill="x", pady=2)
+        if self.busy:
+            btn.configure(state="disabled")
+
+    def set_busy(self, is_busy):
+        self.busy = is_busy
+        self.update_visual_state()
+        if self.expanded:
+            for w in self.controls.winfo_children(): w.destroy()
+            self._populate_controls()
+
+    def update_visual_state(self):
+        if hasattr(self, 'lbl'):
+            self.lbl.destroy()
+
+        if self.busy:
+            icon = "⏳"
+            col = "gray"
+            text = f"{icon} {self.name} (Working...)"
+        else:
+            icon = "☁️" if self.status == "Cloud" else "📂"
+            col = "#facc15" if self.status == "Cloud" else "#4ade80"
+            text = f"{icon} {self.name}"
+
+        self.lbl = ctk.CTkLabel(self.header, text=text, font=("", 14, "bold"), text_color=col)
+        self.lbl.pack(side="left")
+        self.lbl.bind("<Button-1>", self.toggle)
 
 class ProjectManagerApp(ctk.CTk):
     def __init__(self):
@@ -252,7 +424,12 @@ class ProjectManagerApp(ctk.CTk):
         self.tray_icon = None
         self._cloud_meta_error_logged = False
         self._portable_cleanup_scheduled = False
-        
+        self.withdraw() # Hide main window initially
+
+        self.login_window = LoginWindow(self)
+
+    def show_main_app(self):
+        self.deiconify() # Show main window
         self._init_compact_ui()
         self._start_tray_icon()
         
@@ -273,6 +450,7 @@ class ProjectManagerApp(ctk.CTk):
         # 2. Main List
         self.project_list = ctk.CTkScrollableFrame(self)
         self.project_list.pack(fill="both", expand=True, padx=5, pady=5)
+        self.project_cards = {}
         
         # 3. Footer
         footer = ctk.CTkFrame(self, fg_color="transparent")
@@ -293,21 +471,18 @@ class ProjectManagerApp(ctk.CTk):
         self.progress_bar.pack(fill="x", pady=(5,0))
 
     def show_menu(self):
-        # Simple dropdown simulation or just open settings
-        # For simplicity in this layout, let's open a choice dialog or just default to settings
-        # A proper menu would need a Toplevel or a dropdown widget (CTkOptionMenu is tricky for actions)
-        # Let's use a small Toplevel as a popup menu
-        top = ctk.CTkToplevel(self)
-        top.geometry("220x260")
-        top.title("Menu")
-        bring_to_front(top, self)
-        # Position it near the button? (Too complex for now, just center)
-        ctk.CTkButton(top, text="⚙️ Settings", command=lambda: [SettingsWindow(self, ENV_PATH), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="📦 Export Launcher", command=lambda: [self.export_portable_bundle(), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="☁️ Deactivate All", command=lambda: [self.deactivate_all_projects(), top.destroy()]).pack(fill="x", padx=5, pady=5)
+        menu_items = [
+            ("⚙️ Settings", lambda: SettingsWindow(self, ENV_PATH)),
+            ("📦 Export Launcher", self.export_portable_bundle),
+            ("☁️ Deactivate All", self.deactivate_all_projects),
+        ]
+
         if self._is_portable_mode():
-            ctk.CTkButton(top, text="🧹 Deactivate + Cleanup", fg_color="#f59e0b", command=lambda: [self.deactivate_all_projects(cleanup=True, quit_after=True), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="🚪 Quit", fg_color="red", command=self.on_close).pack(fill="x", padx=5, pady=5)
+            menu_items.append(("🧹 Deactivate + Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black"))
+
+        menu_items.append(("🚪 Quit", self.on_close, "red", "white"))
+
+        PopupMenu(self, self.menu_btn, menu_items)
 
     def reload_config(self):
         self._sync_settings_from_cloud()
@@ -536,13 +711,14 @@ class ProjectManagerApp(ctk.CTk):
             if os.path.exists(local_path):
                 self.log(f"☁️ Deactivating {name}...")
                 self._robust_move_to_backup(local_path, dest_path, name)
-        if cleanup:
-            if self._is_portable_mode():
-                self._schedule_self_cleanup()
-            else:
-                self.log("⚠️ Cleanup skipped (not in portable mode).")
+
+        if cleanup and self._is_portable_mode():
+            self.log("🧹 Scheduling self-cleanup...")
+            self._schedule_self_cleanup()
+
         if quit_after:
-            self.after(0, self.on_close)
+            # Adding a small delay to ensure the cleanup script has time to be created
+            self.after(1000, self.on_close)
 
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
@@ -553,20 +729,27 @@ class ProjectManagerApp(ctk.CTk):
         hidden.extend(["projectmanagerapp", "$recycle.bin"])       
 
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
+
         registry = {}
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
+
+        initial_registry = registry.copy()
+
         for f in local_folders: registry[f] = "Local"
         for name in list(registry.keys()):
             if name not in local_folders:
                 registry[name] = "Cloud"
-        self._save_reg(registry)
+
+        if registry != initial_registry:
+            self._save_reg(registry)
 
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
             status = registry[name]
             # Create Card
-            ProjectCard(self.project_list, self, name, status)
+            card = ProjectCard(self.project_list, self, name, status)
+            self.project_cards[name] = card
 
     # --- Methods removed/consolidated ---
     # _init_sidebar, _init_main_area, _init_activity_log, _create_project_card, _add_sidebar_link 
@@ -576,29 +759,37 @@ class ProjectManagerApp(ctk.CTk):
     # --- ADVANCED TRANSFER LOGIC ---
 
     def deactivate_project(self, name):
-        if getattr(self, f"_is_busy_{name}", False):
+        card = self.project_cards.get(name)
+        if card and card.busy:
             self.log(f"⚠️ Operation already in progress for {name}.")
             return
-        setattr(self, f"_is_busy_{name}", True)
 
-        self.log(f"☁️ Deactivating {name}...")
-        root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
-        local_path = os.path.join(root, name)
+        if card:
+            card.set_busy(True)
 
-        backup_path = self._drive_root()
-        if not backup_path:
-            self.log("❌ Error: No Drive Path set in settings.", "red")
-            setattr(self, f"_is_busy_{name}", False)
-            return
-        try:
-            os.makedirs(backup_path, exist_ok=True)
-        except Exception as e:
-            self.log(f"❌ Error: Drive Path unavailable ({e})", "red")
-            setattr(self, f"_is_busy_{name}", False)
-            return
+        def task():
+            try:
+                self.log(f"☁️ Deactivating {name}...")
+                root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+                local_path = os.path.join(root, name)
 
-        dest_path = os.path.join(backup_path, name)
-        threading.Thread(target=self._robust_move_to_backup, args=(local_path, dest_path, name)).start()
+                backup_path = self._drive_root()
+                if not backup_path:
+                    self.log("❌ Error: No Drive Path set in settings.", "red")
+                    return
+                try:
+                    os.makedirs(backup_path, exist_ok=True)
+                except Exception as e:
+                    self.log(f"❌ Error: Drive Path unavailable ({e})", "red")
+                    return
+
+                dest_path = os.path.join(backup_path, name)
+                self._robust_move_to_backup(local_path, dest_path, name)
+            finally:
+                if card:
+                    self.after(0, lambda: card.set_busy(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _copy_with_progress(self, src, dst):
         # Count files first for progress
@@ -627,7 +818,10 @@ class ProjectManagerApp(ctk.CTk):
     def _robust_move_to_backup(self, src, dst, name):
         try:
             # 1. Process External Resources (Move into project Assets folder)
-            self._backup_external_resources(src)
+            self._backup_project_resources(src)
+
+            # 1.5 Uninstall unused software
+            self._uninstall_software_if_unused(src, name)
 
             # 2. Copy Tree (Safely across drives)
             self.log(f"📤 Syncing to backup: {dst}")
@@ -642,31 +836,37 @@ class ProjectManagerApp(ctk.CTk):
             self.after(0, self._refresh_projects)
         except Exception as e:
             self.log(f"❌ Transfer Failed: {e}", "red")
-        finally:
-             setattr(self, f"_is_busy_{name}", False)
 
     def activate_project(self, name):
-        if getattr(self, f"_is_busy_{name}", False):
-             self.log(f"⚠️ Operation already in progress for {name}.")
-             return
-        setattr(self, f"_is_busy_{name}", True)
-
-        self.log(f"🚀 Activating {name}...")
-        root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
-        local_path = os.path.join(root, name)
-        root_backup = self._drive_root()
-        if not root_backup:
-            self.log("❌ Error: No Drive Path set in settings.", "red")
-            setattr(self, f"_is_busy_{name}", False)
-            return
-        backup_path = os.path.join(root_backup, name)
-
-        if not os.path.exists(backup_path):
-            self.log(f"❌ Backup not found at {backup_path}", "red")
-            setattr(self, f"_is_busy_{name}", False)
+        card = self.project_cards.get(name)
+        if card and card.busy:
+            self.log(f"⚠️ Operation already in progress for {name}.")
             return
 
-        threading.Thread(target=self._robust_move_to_local, args=(backup_path, local_path, name)).start()
+        if card:
+            card.set_busy(True)
+
+        def task():
+            try:
+                self.log(f"🚀 Activating {name}...")
+                root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+                local_path = os.path.join(root, name)
+                root_backup = self._drive_root()
+                if not root_backup:
+                    self.log("❌ Error: No Drive Path set in settings.", "red")
+                    return
+                backup_path = os.path.join(root_backup, name)
+
+                if not os.path.exists(backup_path):
+                    self.log(f"❌ Backup not found at {backup_path}", "red")
+                    return
+
+                self._robust_move_to_local(backup_path, local_path, name)
+            finally:
+                if card:
+                    self.after(0, lambda: card.set_busy(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _robust_move_to_local(self, src, dst, name):
         try:
@@ -675,7 +875,7 @@ class ProjectManagerApp(ctk.CTk):
             self._copy_with_progress(src, dst)
 
             # Restore resources/installs
-            self._restore_external_resources(dst)
+            self._restore_project_resources(dst)
             self._check_install_software(dst)
 
             # Delete Backup (Only if you want it moved, otherwise comment this)
@@ -686,37 +886,48 @@ class ProjectManagerApp(ctk.CTk):
             self.after(0, self._refresh_projects)
         except Exception as e:
             self.log(f"❌ Restore Failed: {e}", "red")
-        finally:
-            setattr(self, f"_is_busy_{name}", False)
 
     # --- RESOURCE HANDLERS ---
-    def _backup_external_resources(self, project_path):
+    def _backup_project_resources(self, project_path):
         manifest = os.path.join(project_path, "omni.json")
         if not os.path.exists(manifest): return
         with open(manifest, "r") as f: data = json.load(f)
         assets_dir = os.path.join(project_path, "_omni_assets")    
         if not os.path.exists(assets_dir): os.makedirs(assets_dir) 
-        restore_map = {}
-        for p in data.get("external_paths", []):
+
+        # Load existing restore map or create a new one
+        map_file = os.path.join(assets_dir, "restore_map.json")
+        restore_map = self._load_json(map_file)
+
+        paths_to_backup = []
+        paths_to_backup.extend([(p, "External") for p in data.get("external_paths", [])])
+        paths_to_backup.extend([(p, "App State") for p in data.get("app_state_paths", [])])
+
+        for p, resource_type in paths_to_backup:
             if os.path.exists(p):
                 pid = hashlib.md5(p.encode()).hexdigest()
                 dest = os.path.join(assets_dir, pid)
-                self.log(f"   > Moving External: {p}")
+                self.log(f"   > Moving {resource_type}: {p}")
                 if os.path.isdir(p):
                     shutil.move(p, dest)
-                else: shutil.copy2(p, dest); os.remove(p)
+                else:
+                    shutil.copy2(p, dest)
+                    os.remove(p)
                 restore_map[pid] = p
-        with open(os.path.join(assets_dir, "restore_map.json"), "w") as f: json.dump(restore_map, f)
 
-    def _restore_external_resources(self, project_path):
+        self._save_json(map_file, restore_map)
+
+    def _restore_project_resources(self, project_path):
         assets_dir = os.path.join(project_path, "_omni_assets")    
         map_file = os.path.join(assets_dir, "restore_map.json")    
         if not os.path.exists(map_file): return
-        with open(map_file, "r") as f: restore_map = json.load(f)  
+
+        restore_map = self._load_json(map_file)
+
         for pid, original_path in restore_map.items():
             stored_path = os.path.join(assets_dir, pid)
             if os.path.exists(stored_path):
-                self.log(f"   > Restoring External: {original_path}")
+                self.log(f"   > Restoring resource: {original_path}")
                 parent = os.path.dirname(original_path)
                 try:
                     if not os.path.exists(parent): os.makedirs(parent)
@@ -727,10 +938,12 @@ class ProjectManagerApp(ctk.CTk):
                     fallback_path = os.path.join(fallback_dir, pid)
                     shutil.move(stored_path, fallback_path)
                     self.log(f"   ⚠️ Restore failed, kept at {fallback_path} ({e})", "red")
-        # Remove assets folder only if fully restored
+
+        # Clean up the map so we don't restore twice.
+        self._save_json(map_file, {})
+
         try:
-            remaining = os.listdir(assets_dir)
-            if not remaining or remaining == ["restore_map.json"]:
+            if not os.listdir(assets_dir) or os.listdir(assets_dir) == ["restore_map.json"]:
                 shutil.rmtree(assets_dir)
         except Exception:
             pass
@@ -747,6 +960,44 @@ class ProjectManagerApp(ctk.CTk):
                     self.log(f"   ⬇️ Auto-Installing {app}...")    
                     subprocess.run(["winget", "install", "-e", "--id", app, "--silent"], shell=True)
             except: pass
+
+    def _uninstall_software_if_unused(self, project_path, name):
+        manifest_path = os.path.join(project_path, "omni.json")
+        if not os.path.exists(manifest_path):
+            return
+
+        with open(manifest_path, "r") as f:
+            data = json.load(f)
+
+        software_to_uninstall = data.get("software", [])
+        if not software_to_uninstall:
+            return
+
+        # Get all other active projects
+        root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+        all_projects = self._load_reg()
+        other_active_projects = [p for p, s in all_projects.items() if s == "Local" and p != name]
+
+        # Get all software dependencies from other active projects
+        other_dependencies = set()
+        for project_name in other_active_projects:
+            other_manifest_path = os.path.join(root, project_name, "omni.json")
+            if os.path.exists(other_manifest_path):
+                with open(other_manifest_path, "r") as f:
+                    other_data = json.load(f)
+                for s in other_data.get("software", []):
+                    other_dependencies.add(s)
+
+        # Uninstall software if it's not a dependency of any other active project
+        for app in software_to_uninstall:
+            if app not in other_dependencies:
+                self.log(f"   > Uninstalling {app}...")
+                try:
+                    subprocess.run(["winget", "uninstall", "-e", "--id", app, "--silent"], shell=True)
+                except Exception as e:
+                    self.log(f"   > Failed to uninstall {app}: {e}", "red")
+            else:
+                self.log(f"   > Skipping uninstall for {app} (in use by another project).")
 
     # --- GUI ACTIONS ---
     def open_studio(self, n):
