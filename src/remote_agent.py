@@ -15,6 +15,7 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
@@ -420,7 +421,7 @@ async def api_activate_project(name: str, request: Request):
 @app.post("/api/projects/{name}/deactivate")
 async def api_deactivate_project(name: str, request: Request):
     require_token_from_request(request)
-    result = deactivate_project(name)
+    result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
