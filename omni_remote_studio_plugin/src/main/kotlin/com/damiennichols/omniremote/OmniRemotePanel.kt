@@ -34,6 +34,8 @@ import javax.swing.JTextField
 import javax.swing.SwingUtilities
 
 class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
+      private val MAX_TERMINAL_LINES = 2000
+
     private val props = PropertiesComponent.getInstance()
     private val hostField = JTextField()
     private val hostServer = HostServer(project) { msg -> logHostMessage(msg) }
@@ -501,6 +503,15 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private fun appendTerminal(text: String) {
         SwingUtilities.invokeLater {
             terminalOutput.append(text)
+            if (terminalOutput.lineCount > MAX_TERMINAL_LINES) {
+                val linesToRemove = terminalOutput.lineCount - MAX_TERMINAL_LINES
+                try {
+                    val endOffset = terminalOutput.getLineEndOffset(linesToRemove - 1)
+                    terminalOutput.document.remove(0, endOffset)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
             terminalOutput.caretPosition = terminalOutput.document.length
         }
     }
