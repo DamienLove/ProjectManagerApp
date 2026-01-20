@@ -15,6 +15,7 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
@@ -399,7 +400,7 @@ async def health(request: Request):
 @app.get("/api/projects")
 async def get_projects(request: Request):
     require_token_from_request(request)
-    registry = compute_registry()
+    registry = await run_in_threadpool(compute_registry)
     projects = []
     for name, status in sorted(registry.items()):
         if name.lower() in HIDDEN_PROJECTS:
