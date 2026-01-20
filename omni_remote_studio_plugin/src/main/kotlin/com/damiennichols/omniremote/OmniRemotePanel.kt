@@ -3,6 +3,7 @@ package com.damiennichols.omniremote
 import com.google.gson.Gson
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.Project
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Font
@@ -27,7 +28,6 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JPasswordField
 import javax.swing.JScrollPane
-import com.intellij.openapi.project.Project
 import javax.swing.JTabbedPane
 import javax.swing.JTextArea
 import javax.swing.JTextField
@@ -45,6 +45,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private val statusLabel = JLabel("Not connected")
     private val listModel = DefaultListModel<ProjectEntry>()
     private val projectList = JList(listModel)
+
     private val terminalStatusLabel = JLabel("Terminal: disconnected")
     private val terminalOutput = JTextArea()
     private val terminalCommandField = JTextField()
@@ -57,13 +58,69 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private var terminalSocket: WebSocket? = null
     private var terminalSessionId: String? = null
 
+    // Host Mode
+    private val hostPortField = JTextField("8765")
+    private val hostTokenField = JPasswordField()
+    private val hostStatusLabel = JLabel("Host: stopped")
+    private val hostManager = OmniRemoteHost()
+
     private val client = HttpClient.newBuilder().build()
     private val gson = Gson()
 
     init {
         loadSettings()
-        add(buildConfigPanel(), BorderLayout.NORTH)
+        add(buildConfigTabs(), BorderLayout.NORTH)
         add(buildContentTabs(), BorderLayout.CENTER)
+    }
+
+    private fun buildConfigTabs(): JTabbedPane {
+        val tabs = JTabbedPane()
+        tabs.addTab("Remote Settings", buildConfigPanel())
+        tabs.addTab("Host Mode", buildHostPanel())
+        return tabs
+    }
+
+    private fun buildHostPanel(): JPanel {
+        val panel = JPanel(GridBagLayout())
+        val c = GridBagConstraints().apply {
+            fill = GridBagConstraints.HORIZONTAL
+            insets = Insets(4, 8, 4, 8)
+            weightx = 1.0
+        }
+
+        var row = 0
+        addRow(panel, c, row++, "Host Port", hostPortField)
+        addRow(panel, c, row++, "Host Token", hostTokenField)
+
+        val startButton = JButton("Start Host")
+        val stopButton = JButton("Stop Host")
+
+        startButton.addActionListener {
+            val port = hostPortField.text.toIntOrNull() ?: 8765
+            val token = String(hostTokenField.password)
+            hostManager.start(port, token)
+            hostStatusLabel.text = "Host: running on port " + port
+            saveSettings()
+        }
+
+        stopButton.addActionListener {
+            hostManager.stop()
+            hostStatusLabel.text = "Host: stopped"
+        }
+
+        c.gridy = row++
+        c.gridwidth = 1
+        c.gridx = 0
+        panel.add(startButton, c)
+        c.gridx = 1
+        panel.add(stopButton, c)
+
+        c.gridx = 0
+        c.gridy = row++
+        c.gridwidth = 2
+        panel.add(hostStatusLabel, c)
+
+        return panel
     }
 
     private fun buildContentTabs(): JTabbedPane {
@@ -155,7 +212,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         addRow(panel, c, row++, "Token", tokenField)
 
         c.gridx = 0
-        c.gridy = row
+        c.gridy = row++
         c.gridwidth = 2
         panel.add(secureCheck, c)
 
@@ -168,7 +225,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                     updateStatus("Connected")
                 } else {
                     val code = response?.statusCode() ?: 0
-                    updateStatus("Connection failed ($code)")
+                    updateStatus("Connection failed (" + code + ")")
                 }
             }
         }
@@ -179,7 +236,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             refreshProjects()
         }
 
-        c.gridy = row + 1
+        c.gridy = row++
         c.gridwidth = 1
         c.gridx = 0
         panel.add(testButton, c)
@@ -187,7 +244,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         panel.add(refreshButton, c)
 
         c.gridx = 0
-        c.gridy = row + 2
+        c.gridy = row++
         c.gridwidth = 2
         panel.add(statusLabel, c)
 
@@ -267,7 +324,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         activateButton.addActionListener {
             val entry = projectList.selectedValue ?: return@addActionListener
             runInBackground {
-                request("POST", "/api/projects/${encode(entry.name)}/activate")
+                request("POST", "/api/projects/" + encode(entry.name) + "/activate")
                 refreshProjects()
             }
         }
@@ -276,7 +333,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         deactivateButton.addActionListener {
             val entry = projectList.selectedValue ?: return@addActionListener
             runInBackground {
-                request("POST", "/api/projects/${encode(entry.name)}/deactivate")
+                request("POST", "/api/projects/" + encode(entry.name) + "/deactivate")
                 refreshProjects()
             }
         }
@@ -285,7 +342,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         openStudioButton.addActionListener {
             val entry = projectList.selectedValue ?: return@addActionListener
             runInBackground {
-                request("POST", "/api/projects/${encode(entry.name)}/open-studio")
+                request("POST", "/api/projects/" + encode(entry.name) + "/open-studio")
             }
         }
 
@@ -311,6 +368,9 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         portField.text = props.getValue("omniremote.port", "")
         tokenField.text = props.getValue("omniremote.token", "")
         secureCheck.isSelected = props.getBoolean("omniremote.secure", false)
+
+        hostPortField.text = props.getValue("omniremote.hostPort", "8765")
+        hostTokenField.text = props.getValue("omniremote.hostToken", "")
     }
 
     private fun saveSettings() {
@@ -318,6 +378,9 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         props.setValue("omniremote.port", portField.text.trim())
         props.setValue("omniremote.token", String(tokenField.password))
         props.setValue("omniremote.secure", secureCheck.isSelected)
+
+        props.setValue("omniremote.hostPort", hostPortField.text.trim())
+        props.setValue("omniremote.hostToken", String(hostTokenField.password))
     }
 
     private fun buildBaseUrl(): String? {
@@ -338,8 +401,8 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
 
         val scheme = if (secureCheck.isSelected) "https" else "http"
         val port = portField.text.trim()
-        val portPart = if (port.isNotBlank()) ":$port" else ""
-        return "$scheme://$host$portPart"
+        val portPart = if (port.isNotBlank()) ":" + port else ""
+        return scheme + "://" + host + portPart
     }
 
     private fun buildWsUrl(): String? {
@@ -360,7 +423,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                 return@runInBackground
             }
             if (response.statusCode() != 200) {
-                updateStatus("Error ${response.statusCode()}")
+                updateStatus("Error " + response.statusCode())
                 return@runInBackground
             }
             val parsed = gson.fromJson(response.body(), ProjectsResponse::class.java)
@@ -368,7 +431,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             SwingUtilities.invokeLater {
                 listModel.clear()
                 projects.forEach { listModel.addElement(it) }
-                updateStatus("Loaded ${projects.size} projects")
+                updateStatus("Loaded " + projects.size + " projects")
             }
         }
     }
@@ -388,7 +451,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         return try {
             client.send(request, HttpResponse.BodyHandlers.ofString())
         } catch (e: Exception) {
-            showMessage("Request failed: ${e.message}")
+            showMessage("Request failed: " + e.message)
             null
         }
     }
@@ -413,7 +476,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                 updateTerminalStatus("Terminal: connected")
             } catch (e: Exception) {
                 updateTerminalStatus("Terminal: connect failed")
-                appendTerminal("== connect failed: ${e.message} ==\n")
+                appendTerminal("== connect failed: " + e.message + " ==\n")
             }
         }
     }
@@ -444,7 +507,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             payload["cwd"] = cwd
         }
         ws.sendText(gson.toJson(payload), true)
-        appendTerminal("> $cmd\n")
+        appendTerminal("> " + cmd + "\n")
         terminalCommandField.text = ""
     }
 
@@ -489,7 +552,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun encode(value: String): String {
-        return URLEncoder.encode(value, Charsets.UTF_8.name())
+        return URLEncoder.encode(value, "UTF-8")
     }
 
     private fun updateStatus(text: String) {
@@ -550,7 +613,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         }
 
         override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String?): CompletionStage<*> {
-            appendTerminal("== terminal disconnected ($statusCode) ==\n")
+            appendTerminal("== terminal disconnected (" + statusCode + ") ==\n")
             terminalSocket = null
             terminalSessionId = null
             updateTerminalStatus("Terminal: disconnected")
@@ -558,7 +621,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         }
 
         override fun onError(webSocket: WebSocket?, error: Throwable) {
-            appendTerminal("== terminal error: ${error.message} ==\n")
+            appendTerminal("== terminal error: " + error.message + " ==\n")
             terminalSocket = null
             terminalSessionId = null
             updateTerminalStatus("Terminal: error")
@@ -573,14 +636,14 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                 "output" -> appendTerminal(payload["data"] as? String ?: "")
                 "started" -> {
                     terminalSessionId = payload["sessionId"] as? String
-                    appendTerminal("== session ${terminalSessionId ?: ""} ==\n")
+                    appendTerminal("== session " + (terminalSessionId ?: "") + " ==\n")
                 }
                 "exit" -> {
                     val code = payload["code"]?.toString() ?: ""
-                    appendTerminal("== exit $code ==\n")
+                    appendTerminal("== exit " + code + " ==\n")
                     terminalSessionId = null
                 }
-                "error" -> appendTerminal("== error: ${payload["message"]} ==\n")
+                "error" -> appendTerminal("== error: " + payload["message"] + " ==\n")
                 else -> appendTerminal(message + "\n")
             }
         } catch (e: Exception) {
@@ -593,6 +656,6 @@ data class ProjectsResponse(val projects: List<ProjectEntry>?)
 
 data class ProjectEntry(val name: String, val status: String) {
     override fun toString(): String {
-        return "$name [$status]"
+        return name + " [" + status + "]"
     }
 }

@@ -26,12 +26,17 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.0")
     implementation("org.slf4j:slf4j-simple:2.0.12")
     implementation("com.google.firebase:firebase-admin:9.2.0")
+    implementation("io.ktor:ktor-server-core:2.3.12")
+    implementation("io.ktor:ktor-server-netty:2.3.12")
+    implementation("io.ktor:ktor-server-websockets:2.3.12")
+    implementation("io.ktor:ktor-server-content-negotiation:2.3.12")
+    implementation("io.ktor:ktor-serialization-gson:2.3.12")
 }
 
 tasks {
     patchPluginXml {
         sinceBuild.set("241")
-        untilBuild.set("242.*")
+        untilBuild.set("261.*")
     }
 
     buildSearchableOptions {

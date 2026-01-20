@@ -119,7 +119,8 @@ fun OmniRemoteApp() {
     var showPassword by rememberSaveable { mutableStateOf(false) }
 
     var host by rememberSaveable { mutableStateOf("") }
-    var port by rememberSaveable { mutableStateOf("8765") }
+    var pmPort by rememberSaveable { mutableStateOf("8765") }
+    var idePort by rememberSaveable { mutableStateOf("8766") }
     var token by rememberSaveable { mutableStateOf("") }
     var cwd by rememberSaveable { mutableStateOf("") }
     var command by rememberSaveable { mutableStateOf("") }
@@ -170,9 +171,9 @@ fun OmniRemoteApp() {
         return cleanHost
     }
 
-    fun buildBaseHost(): String {
+    fun buildBaseHost(portStr: String): String {
         val cleanHost = normalizedHost()
-        val cleanPort = port.trim()
+        val cleanPort = portStr.trim()
         return if (cleanPort.isBlank()) cleanHost else "$cleanHost:$cleanPort"
     }
 
@@ -231,7 +232,7 @@ fun OmniRemoteApp() {
             return
         }
         disconnectWebSocket()
-        val baseHost = buildBaseHost()
+        val baseHost = buildBaseHost(idePort)
         val scheme = if (secure) "wss" else "ws"
         val encodedToken = URLEncoder.encode(cleanToken, "UTF-8")
         val wsUrl = "$scheme://$baseHost/ws/terminal?token=$encodedToken"
@@ -317,7 +318,7 @@ fun OmniRemoteApp() {
         if (cleanHost.isBlank() || cleanToken.isBlank()) {
             throw RuntimeException("Host and token required")
         }
-        val baseHost = buildBaseHost()
+        val baseHost = buildBaseHost(pmPort)
         val scheme = if (secure) "https" else "http"
         val url = "$scheme://$baseHost/api/projects"
         val request = Request.Builder()
@@ -347,7 +348,7 @@ fun OmniRemoteApp() {
         if (cleanHost.isBlank() || cleanToken.isBlank()) {
             throw RuntimeException("Host and token required")
         }
-        val baseHost = buildBaseHost()
+        val baseHost = buildBaseHost(pmPort)
         val scheme = if (secure) "https" else "http"
         val url = "$scheme://$baseHost/api/projects/$name/$action"
         val request = Request.Builder()
@@ -394,16 +395,17 @@ fun OmniRemoteApp() {
                         host = hostFromUrl
                     }
                     if (uri.port != -1) {
-                        port = uri.port.toString()
+                        pmPort = uri.port.toString()
                     } else if (uri.scheme.equals("https", ignoreCase = true)) {
-                        port = ""
+                        pmPort = ""
                     }
                     secure = uri.scheme.equals("https", ignoreCase = true) ||
                         uri.scheme.equals("wss", ignoreCase = true)
                 }
 
                 val hostOverride = doc.getString("host")
-                val portOverride = doc.get("port")
+                val pmPortOverride = doc.get("pmPort") ?: doc.get("port")
+                val idePortOverride = doc.get("idePort")
                 val secureOverride = doc.getBoolean("secure")
                 val tokenOverride = doc.getString("token")
                 if (!hostOverride.isNullOrBlank()) {
@@ -412,10 +414,16 @@ fun OmniRemoteApp() {
                 if (!tokenOverride.isNullOrBlank()) {
                     token = tokenOverride
                 }
-                when (portOverride) {
-                    is Number -> port = portOverride.toInt().toString()
-                    is String -> if (portOverride.isNotBlank()) {
-                        port = portOverride
+                when (pmPortOverride) {
+                    is Number -> pmPort = pmPortOverride.toInt().toString()
+                    is String -> if (pmPortOverride.isNotBlank()) {
+                        pmPort = pmPortOverride
+                    }
+                }
+                when (idePortOverride) {
+                    is Number -> idePort = idePortOverride.toInt().toString()
+                    is String -> if (idePortOverride.isNotBlank()) {
+                        idePort = idePortOverride
                     }
                 }
                 if (secureOverride != null) {
@@ -465,7 +473,8 @@ fun OmniRemoteApp() {
             )
             AppScreen.Setup -> SetupScreen(
                 host = host,
-                port = port,
+                pmPort = pmPort,
+                idePort = idePort,
                 token = token,
                 showToken = showToken,
                 secure = secure,
@@ -475,7 +484,8 @@ fun OmniRemoteApp() {
                 authed = authed,
                 authEmail = authEmail,
                 onHostChange = { host = it },
-                onPortChange = { port = it },
+                onPmPortChange = { pmPort = it },
+                onIdePortChange = { idePort = it },
                 onTokenChange = { token = it },
                 onShowTokenChange = { showToken = it },
                 onSecureChange = { secure = it },
@@ -661,7 +671,8 @@ private fun LoginScreen(
 @Composable
 private fun SetupScreen(
     host: String,
-    port: String,
+    pmPort: String,
+    idePort: String,
     token: String,
     showToken: Boolean,
     secure: Boolean,
@@ -671,7 +682,8 @@ private fun SetupScreen(
     authed: Boolean,
     authEmail: String,
     onHostChange: (String) -> Unit,
-    onPortChange: (String) -> Unit,
+    onPmPortChange: (String) -> Unit,
+    onIdePortChange: (String) -> Unit,
     onTokenChange: (String) -> Unit,
     onShowTokenChange: (Boolean) -> Unit,
     onSecureChange: (Boolean) -> Unit,
@@ -725,20 +737,29 @@ private fun SetupScreen(
             Column(modifier = Modifier.padding(12.dp)) {
                 Text("Connection Setup", color = TextPrimary, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = onHostChange,
+                    label = { Text("Host") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = darkFieldColors()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = host,
-                        onValueChange = onHostChange,
-                        label = { Text("Host") },
+                        value = pmPort,
+                        onValueChange = onPmPortChange,
+                        label = { Text("PM Port") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         colors = darkFieldColors()
                     )
                     OutlinedTextField(
-                        value = port,
-                        onValueChange = onPortChange,
-                        label = { Text("Port") },
-                        modifier = Modifier.width(120.dp),
+                        value = idePort,
+                        onValueChange = onIdePortChange,
+                        label = { Text("IDE Port") },
+                        modifier = Modifier.weight(1f),
                         singleLine = true,
                         colors = darkFieldColors()
                     )

@@ -431,7 +431,7 @@ class ProjectManagerApp(ctk.CTk):
     def show_main_app(self):
         self.deiconify() # Show main window
         self._init_compact_ui()
-        self._start_tray_icon()
+        # self._start_tray_icon()
         
         if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR) 
         self.reload_config()

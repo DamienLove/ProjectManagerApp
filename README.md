@@ -2,12 +2,12 @@
 
 A comprehensive suite for managing and accessing your projects remotely. This project consists of three main components that work together in a flexible, dual-host architecture.
 
-## 🏗️ Architecture
+## ??? Architecture
 Omni Project Remote allows you to control your workstation from your phone using two different hosting methods:
 1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
 2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
-## 📥 Downloads (V2 Alpha)
+## ?? Downloads (V2 Alpha)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
@@ -29,7 +29,8 @@ Omni Project Remote allows you to control your workstation from your phone using
 
 ### 3. Android App
 - Install OmniProjectRemote.apk on your phone.
-- Enter the IP of your PC and the token you set in either the IDE or the Standalone Agent.
+- Enter the IP of your PC, both the PM Port (8765) and IDE Port (8766), and the token defined in your secrets.env.
 
 ## Documentation
 For detailed technical info, visit the [Wiki](https://github.com/DamienLove/ProjectManagerApp/wiki).
+
