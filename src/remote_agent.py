@@ -15,6 +15,8 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+import firebase_admin
+from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
@@ -57,6 +59,23 @@ if not REMOTE_ACCESS_TOKEN:
     print("[remote-agent] REMOTE_ACCESS_TOKEN is not set. Temporary token generated:")
     print(REMOTE_ACCESS_TOKEN)
     print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
+
+# Initialize Firebase
+try:
+    if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        cred = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred, {
+            'projectId': os.getenv("FIREBASE_PROJECT_ID"),
+        })
+        db = firestore.client()
+        print("[remote-agent] Firebase initialized.")
+    else:
+        db = None
+        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+except Exception as e:
+    db = None
+    print(f"[remote-agent] Firebase initialization failed: {e}")
+
 
 app = FastAPI(title=APP_NAME, version=VERSION)
 
@@ -552,5 +571,6 @@ async def ws_terminal(ws: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
+    sync_to_firestore()
     print(f"{APP_NAME} listening on {REMOTE_BIND_HOST}:{REMOTE_PORT}")
     uvicorn.run("remote_agent:app", host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)

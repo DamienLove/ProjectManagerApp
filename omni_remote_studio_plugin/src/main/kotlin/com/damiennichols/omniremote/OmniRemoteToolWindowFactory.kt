@@ -7,7 +7,7 @@ import com.intellij.ui.content.ContentFactory
 
 class OmniRemoteToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = OmniRemotePanel()
+        val panel = OmniRemotePanel(project)
         val content = ContentFactory.getInstance().createContent(panel, "", false)
         toolWindow.contentManager.addContent(content)
     }
