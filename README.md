@@ -10,24 +10,25 @@ A comprehensive suite for managing and accessing your projects remotely. This pr
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
-| **Android App** | [OmniProjectRemote.APK](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniProjectRemote.APK) | Mobile Client |
+| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniProjectRemote.apk) | Mobile Client |
 | **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentSetup.exe) | **Recommended** Installer |
 | **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgentPortable.exe) | No-install Portable version |
-| **IDE Plugin** | [AndroidStudioPlugin.ZIP](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/AndroidStudioPlugin.ZIP) | For Android Studio / IntelliJ |
+| **Remote Agent** | [OmniRemoteAgent.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/OmniRemoteAgent.exe) | Standalone Executable |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/AndroidStudioPlugin.zip) | For Android Studio / IntelliJ |
 | **Config** | [secrets.env.template](https://github.com/DamienLove/ProjectManagerApp/releases/download/V2/secrets.env.template) | Required Configuration Template |
 
 ## Quick Start
 
 ### 1. Remote Agent (Workstation)
-- **Installer**: Download OmniRemoteAgentSetup.exe and follow the prompts.
-- **Config**: Create a secrets.env file in the same directory as the executable (use secrets.env.template as a base).
+- **Installer**: Download `OmniRemoteAgentSetup.exe` and follow the prompts.
+- **Config**: Create a `secrets.env` file in the same directory as the executable (use `secrets.env.template` as a base).
 
 ### 2. Android App (Mobile)
-- Download OmniProjectRemote.APK and install it on your Android device.
+- Download `OmniProjectRemote.apk` and install it on your Android device.
 - Configure the Host, Port, and Access Token in the app settings.
 
 ### 3. IDE Plugin
-- In Android Studio/IntelliJ, go to Settings -> Plugins -> Install Plugin from Disk... and select AndroidStudioPlugin.ZIP.
+- In Android Studio/IntelliJ, go to `Settings` -> `Plugins` -> `Install Plugin from Disk...` and select `AndroidStudioPlugin.zip`.
 
 ## Documentation
 For detailed installation and usage instructions, please refer to the [Wiki](https://github.com/DamienLove/ProjectManagerApp/wiki).
