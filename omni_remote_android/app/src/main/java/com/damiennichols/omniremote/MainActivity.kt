@@ -405,8 +405,12 @@ fun OmniRemoteApp() {
                 val hostOverride = doc.getString("host")
                 val portOverride = doc.get("port")
                 val secureOverride = doc.getBoolean("secure")
+                val tokenOverride = doc.getString("token")
                 if (!hostOverride.isNullOrBlank()) {
                     host = hostOverride
+                }
+                if (!tokenOverride.isNullOrBlank()) {
+                    token = tokenOverride
                 }
                 when (portOverride) {
                     is Number -> port = portOverride.toInt().toString()

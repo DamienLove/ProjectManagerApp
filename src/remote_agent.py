@@ -15,6 +15,8 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
@@ -57,6 +59,23 @@ if not REMOTE_ACCESS_TOKEN:
     print(REMOTE_ACCESS_TOKEN)
     print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
 
+# Initialize Firebase
+try:
+    if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        cred = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred, {
+            'projectId': os.getenv("FIREBASE_PROJECT_ID"),
+        })
+        db = firestore.client()
+        print("[remote-agent] Firebase initialized.")
+    else:
+        db = None
+        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+except Exception as e:
+    db = None
+    print(f"[remote-agent] Firebase initialization failed: {e}")
+
+
 app = FastAPI(title=APP_NAME, version=VERSION)
 
 _sessions_lock = threading.Lock()
@@ -65,6 +84,28 @@ _sessions: Dict[str, "CommandSession"] = {}
 _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
 
+def sync_to_firestore() -> None:
+    if not db:
+        return
+
+    doc_path = os.getenv("FIREBASE_DOCUMENT_PATH")
+    if not doc_path:
+        print("[remote-agent] FIREBASE_DOCUMENT_PATH not set. Skipping Firestore sync.")
+        return
+
+    collection, doc = doc_path.split('/')
+    data = {
+        'host': os.getenv("REMOTE_SYNC_HOST", REMOTE_BIND_HOST), # Use a specific sync host if provided
+        'port': REMOTE_PORT,
+        'token': REMOTE_ACCESS_TOKEN,
+        'updated_at': firestore.SERVER_TIMESTAMP,
+    }
+
+    try:
+        db.collection(collection).document(doc).set(data, merge=True)
+        print(f"[remote-agent] Synced connection info to Firestore: {doc_path}")
+    except Exception as e:
+        print(f"[remote-agent] Firestore sync failed: {e}")
 
 def log(msg: str) -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -536,5 +577,6 @@ async def ws_terminal(ws: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
+    sync_to_firestore()
     print(f"{APP_NAME} listening on {REMOTE_BIND_HOST}:{REMOTE_PORT}")
     uvicorn.run("remote_agent:app", host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)
