@@ -171,6 +171,101 @@ class SettingsWindow(ctk.CTkToplevel):
         self.parent._sync_settings_to_cloud()
         self.parent.reload_config(); self.destroy()
 
+class PopupMenu(ctk.CTkToplevel):
+    def __init__(self, parent, widget, menu_items):
+        super().__init__(parent)
+        self.widget = widget
+        self.withdraw()  # Hide initially
+
+        # Remove decorations and set on top
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+
+        # Colors (Light, Dark)
+        bg_color = ("#ffffff", "#1f2937")
+        border_color = ("#3b82f6", "#3b82f6")
+
+        self.frame = ctk.CTkFrame(self, fg_color=bg_color, corner_radius=6, border_width=2, border_color=border_color)
+        self.frame.pack(fill="both", expand=True)
+
+        for item in menu_items:
+            # item format: (text, command, fg_color, text_color)
+            text = item[0]
+            cmd = item[1]
+            fg = item[2] if len(item) > 2 else "transparent"
+            tc = item[3] if len(item) > 3 else ("black", "white")
+
+            # Hover color logic
+            hover = ("#e5e7eb", "#374151") if fg == "transparent" else None
+
+            btn = ctk.CTkButton(
+                self.frame,
+                text=text,
+                command=lambda c=cmd: self._invoke(c),
+                fg_color=fg,
+                text_color=tc,
+                anchor="w",
+                width=180,
+                height=35,
+                corner_radius=4,
+                hover_color=hover
+            )
+
+            btn.pack(fill="x", padx=5, pady=3)
+
+        self.update_idletasks()
+        self._position_window()
+        self.deiconify()
+
+        # Capture clicks
+        self.after(10, self._set_grab)
+
+    def _set_grab(self):
+        try:
+            self.grab_set()
+            self.focus_force()
+            self.bind("<Button-1>", self._check_click_outside)
+            self.bind("<Escape>", lambda e: self.destroy())
+        except Exception:
+            pass
+
+    def _position_window(self):
+        try:
+            root_x = self.widget.winfo_rootx()
+            root_y = self.widget.winfo_rooty()
+            btn_w = self.widget.winfo_width()
+            btn_h = self.widget.winfo_height()
+
+            req_w = self.winfo_reqwidth()
+            req_h = self.winfo_reqheight()
+
+            # Align right edge of menu with right edge of button
+            x = (root_x + btn_w) - req_w
+            # Ensure it doesn't go off the left side of the screen
+            if x < 0: x = root_x
+
+            y = root_y + btn_h + 5
+
+            self.geometry(f"{req_w}x{req_h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"+0+0")
+
+    def _invoke(self, cmd):
+        self.destroy()
+        if cmd: cmd()
+
+    def _check_click_outside(self, event):
+        x = event.x_root
+        y = event.y_root
+
+        wx = self.winfo_rootx()
+        wy = self.winfo_rooty()
+        ww = self.winfo_width()
+        wh = self.winfo_height()
+
+        if not (wx <= x <= wx + ww and wy <= y <= wy + wh):
+             self.destroy()
+
 # --- MAIN APPLICATION ---
 
 class CollapsibleFrame(ctk.CTkFrame):
@@ -293,21 +388,18 @@ class ProjectManagerApp(ctk.CTk):
         self.progress_bar.pack(fill="x", pady=(5,0))
 
     def show_menu(self):
-        # Simple dropdown simulation or just open settings
-        # For simplicity in this layout, let's open a choice dialog or just default to settings
-        # A proper menu would need a Toplevel or a dropdown widget (CTkOptionMenu is tricky for actions)
-        # Let's use a small Toplevel as a popup menu
-        top = ctk.CTkToplevel(self)
-        top.geometry("220x260")
-        top.title("Menu")
-        bring_to_front(top, self)
-        # Position it near the button? (Too complex for now, just center)
-        ctk.CTkButton(top, text="⚙️ Settings", command=lambda: [SettingsWindow(self, ENV_PATH), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="📦 Export Launcher", command=lambda: [self.export_portable_bundle(), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="☁️ Deactivate All", command=lambda: [self.deactivate_all_projects(), top.destroy()]).pack(fill="x", padx=5, pady=5)
+        menu_items = [
+            ("⚙️ Settings", lambda: SettingsWindow(self, ENV_PATH)),
+            ("📦 Export Launcher", self.export_portable_bundle),
+            ("☁️ Deactivate All", self.deactivate_all_projects),
+        ]
+
         if self._is_portable_mode():
-            ctk.CTkButton(top, text="🧹 Deactivate + Cleanup", fg_color="#f59e0b", command=lambda: [self.deactivate_all_projects(cleanup=True, quit_after=True), top.destroy()]).pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(top, text="🚪 Quit", fg_color="red", command=self.on_close).pack(fill="x", padx=5, pady=5)
+            menu_items.append(("🧹 Deactivate + Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black"))
+
+        menu_items.append(("🚪 Quit", self.on_close, "red", "white"))
+
+        PopupMenu(self, self.menu_btn, menu_items)
 
     def reload_config(self):
         self._sync_settings_from_cloud()
@@ -553,14 +645,20 @@ class ProjectManagerApp(ctk.CTk):
         hidden.extend(["projectmanagerapp", "$recycle.bin"])       
 
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
+
         registry = {}
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
+
+        initial_registry = registry.copy()
+
         for f in local_folders: registry[f] = "Local"
         for name in list(registry.keys()):
             if name not in local_folders:
                 registry[name] = "Cloud"
-        self._save_reg(registry)
+
+        if registry != initial_registry:
+            self._save_reg(registry)
 
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue

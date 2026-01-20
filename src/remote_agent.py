@@ -15,6 +15,7 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "0.1.0"
@@ -402,7 +403,7 @@ async def health(request: Request):
 @app.get("/api/projects")
 async def get_projects(request: Request):
     require_token_from_request(request)
-    registry = compute_registry()
+    registry = await run_in_threadpool(compute_registry)
     projects = []
     for name, status in sorted(registry.items()):
         if name.lower() in HIDDEN_PROJECTS:
@@ -424,8 +425,7 @@ async def api_activate_project(name: str, request: Request):
 @app.post("/api/projects/{name}/deactivate")
 async def api_deactivate_project(name: str, request: Request):
     require_token_from_request(request)
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, deactivate_project, name)
+    result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
@@ -452,11 +452,20 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
     log(f"Command: {cmd} (cwd={cwd})")
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
-        output = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
+
+        output = stdout_str + ("\n" + stderr_str if stderr_str else "")
         if len(output) > 20000:
             output = output[:20000] + "\n...truncated..."
-        return {"status": "ok", "code": res.returncode, "output": output}
+        return {"status": "ok", "code": proc.returncode, "output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
