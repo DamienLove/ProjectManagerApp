@@ -21,7 +21,15 @@ from firebase_admin import credentials, firestore
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
 VERSION = "4.1.0 (Robust Transfer)"
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def get_base_dir() -> str:
+    # When packaged (PyInstaller), anchor config next to the executable.
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+BASE_DIR = get_base_dir()
+
 ENV_PATH = os.path.join(BASE_DIR, "secrets.env")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
@@ -91,11 +99,56 @@ class LoginWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(self, text="Login", command=self.login).pack(pady=20)
 
+    
+    
+    def register(self):
+        email = self.email_entry.get().strip()
+        password = self.password_entry.get().strip()
+        if not email or not password:
+            self.status_lbl.configure(text="Email and password required")
+            return
+        if len(password) < 6:
+            self.status_lbl.configure(text="Password must be 6+ chars")
+            return
+        self.status_lbl.configure(text="Registering...", text_color="white")
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+            data = resp.json()
+            if resp.status_code == 200:
+                self.status_lbl.configure(text="Account created! Logging in...", text_color="green")
+                self.login()
+            else:
+                err = data.get("error", {}).get("message", "Registration failed")
+                self.status_lbl.configure(text=f"Error: {err}", text_color="red")
+        except Exception as e:
+            self.status_lbl.configure(text="Connection error", text_color="red")
+
+    def reset_password(self):
+        email = self.email_entry.get().strip()
+        if not email:
+            self.status_lbl.configure(text="Enter email first", text_color="orange")
+            return
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
+            if resp.status_code == 200:
+                self.status_lbl.configure(text="Reset email sent!", text_color="green")
+            else:
+                err = resp.json().get("error", {}).get("message", "Error")
+                self.status_lbl.configure(text=f"Error: {err}", text_color="red")
+        except Exception as e:
+            self.status_lbl.configure(text="Connection failed", text_color="red")
+
     def login(self):
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
         if not email or not password:
+            self.status_lbl.configure(text="Missing email/password")
             return
+        self.status_lbl.configure(text="Authenticating...", text_color="white")
         api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
         try:
@@ -103,16 +156,35 @@ class LoginWindow(ctk.CTkToplevel):
             data = resp.json()
             if resp.status_code == 200:
                 uid = data["localId"]
+                is_owner = (email.lower() == "me@damiennichols.com")
+                self.parent.save_setting("FIREBASE_UID", uid)
+                self.parent.save_setting("FIREBASE_EMAIL", email)
+                if is_owner:
+                    self.parent.save_setting("DEVELOPER_MODE", "1")
+                
                 os.environ["FIREBASE_UID"] = uid
                 self.parent.firebase_uid = uid
-                self.parent.save_setting("FIREBASE_UID", uid)
+                
+                # Tag user in Firestore
+                if self.parent.db:
+                    try:
+                        self.parent.db.collection("users").document(uid).set({
+                            "email": email,
+                            "role": "owner" if is_owner else "user",
+                            "last_login": firestore.SERVER_TIMESTAMP
+                        }, merge=True)
+                    except: pass
+
                 self.parent.show_main_app()
                 self.destroy()
             else:
                 err = data.get("error", {}).get("message", "Login failed")
-                print(f"Login error: {err}")
+                if err == "INVALID_LOGIN_CREDENTIALS":
+                    self.status_lbl.configure(text="Invalid email or password", text_color="red")
+                else:
+                    self.status_lbl.configure(text=f"Error: {err}", text_color="red")
         except Exception as e:
-            print(f"Connection error: {e}")
+            self.status_lbl.configure(text="Connection error", text_color="red")
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
@@ -847,29 +919,51 @@ class ProjectManagerApp(ctk.CTk):
             # Adding a small delay to ensure the cleanup script has time to be created
             self.after(1000, self.on_close)
 
+    
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
-        hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]    
-        hidden.extend(["projectmanagerapp", "$recycle.bin"])
+        
+        drive_root = self._drive_root()
+        hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
+        hidden.extend(["projectmanagerapp", "$recycle.bin", CLOUD_META_DIRNAME.lower()])
 
+        # 1. Scan Local
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
 
+        # 2. Scan Cloud (Drive)
+        cloud_folders = set()
+        if drive_root and os.path.exists(drive_root):
+            try:
+                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
+            except: pass
+
+        # 3. Build Registry
         registry = {}
+        # Start with what's in the saved registry files
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
 
-        initial_registry = registry.copy()
+        # Merge in actual folders found
+        for f in local_folders:
+            registry[f] = "Local"
+        
+        for f in cloud_folders:
+            # If not already Local, it's Cloud
+            if registry.get(f) != "Local":
+                registry[f] = "Cloud"
 
-        for f in local_folders: registry[f] = "Local"
+        # Cleanup registry: if it's in registry but doesn't exist in either place, remove it
+        # (Or keep it as 'Cloud' if you expect it might come back, but let's be clean)
         for name in list(registry.keys()):
-            if name not in local_folders:
-                registry[name] = "Cloud"
+            if name not in local_folders and name not in cloud_folders:
+                # If it's not local and not in drive, it's effectively "Forgotten" unless manually added
+                # But for now, let's keep everything found in the scan.
+                pass
 
-        if registry != initial_registry:
-            self._save_reg(registry)
+        self._save_reg(registry)
 
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
@@ -878,6 +972,7 @@ class ProjectManagerApp(ctk.CTk):
             card = ProjectCard(self.project_list, self, name, status)
             self.project_cards[name] = card
         self.sync_to_firestore()
+
 
     def deactivate_project(self, name):
         card = self.project_cards.get(name)
