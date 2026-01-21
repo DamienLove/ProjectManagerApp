@@ -5,6 +5,7 @@ import com.google.auth.oauth2.GoogleCredentials
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.FirestoreClient
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
 import io.javalin.Javalin
 import java.io.BufferedReader
@@ -23,17 +24,23 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     init {
         try {
             if (FirebaseApp.getApps().isEmpty()) {
-                val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                if (credentialsPath != null) {
+                val props = PropertiesComponent.getInstance()
+                val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS") 
+                    ?: props.getValue("omniremote.firebaseCredentialsPath")
+                
+                if (credentialsPath != null && credentialsPath.isNotBlank()) {
                     val serviceAccount = FileInputStream(credentialsPath)
+                    val projectId = System.getenv("FIREBASE_PROJECT_ID") 
+                        ?: props.getValue("omniremote.firebaseProjectId")
+                        
                     val options = FirebaseOptions.builder()
                         .setCredentials(GoogleCredentials.fromStream(serviceAccount))
-                        .setProjectId(System.getenv("FIREBASE_PROJECT_ID"))
+                        .setProjectId(projectId)
                         .build()
                     FirebaseApp.initializeApp(options)
-                    onLog("Firebase initialized.")
+                    onLog("Firebase initialized with project: $projectId")
                 } else {
-                    onLog("Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+                    onLog("Firebase not initialized (Credentials path not set in environment or settings).")
                 }
             }
         } catch (e: Exception) {
@@ -113,14 +120,20 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     private fun syncToFirestore(port: Int, token: String) {
         try {
             val db = FirestoreClient.getFirestore()
-            val docPath = System.getenv("FIREBASE_DOCUMENT_PATH")
-            if (docPath != null) {
-                val (collection, doc) = docPath.split('/')
+            val props = PropertiesComponent.getInstance()
+            val docPath = System.getenv("FIREBASE_DOCUMENT_PATH") 
+                ?: props.getValue("omniremote.firebaseDocPath")
+                
+            if (docPath != null && docPath.contains('/')) {
+                val parts = docPath.split('/')
+                val collection = parts[0]
+                val doc = parts[1]
                 val data = mapOf(
                     "host" to (System.getenv("REMOTE_SYNC_HOST") ?: "127.0.0.1"),
                     "port" to port,
                     "token" to token,
-                    "updated_at" to com.google.cloud.Timestamp.now()
+                    "updated_at" to com.google.cloud.Timestamp.now(),
+                    "agent" to "intellij-plugin"
                 )
                 db.collection(collection).document(doc).set(data).get()
                 onLog("Synced connection info to Firestore.")

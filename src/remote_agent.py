@@ -48,11 +48,11 @@ REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
 REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
 REMOTE_DEFAULT_CWD = os.getenv("REMOTE_DEFAULT_CWD", BASE_DIR)
-REMOTE_ALLOWED_ROOTS = [p.strip() for p in os.getenv("REMOTE_ALLOWED_ROOTS", "").split(";") if p.strip()]
+REMOTE_ALLOWED_ROOTS = [p.strip() for p in os.getenv("REMOTE_ALLOWED_ROOTS", "").split(";") if p.strip()] 
 
 LOCAL_WORKSPACE_ROOT = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
 DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
-HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
+HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]   
 
 if not REMOTE_ACCESS_TOKEN:
     REMOTE_ACCESS_TOKEN = secrets.token_urlsafe(32)
@@ -71,10 +71,38 @@ try:
         print("[remote-agent] Firebase initialized.")
     else:
         db = None
-        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")        
 except Exception as e:
     db = None
     print(f"[remote-agent] Firebase initialization failed: {e}")
+
+def sync_to_firestore():
+    if not db:
+        return
+    doc_path = os.getenv("FIREBASE_DOCUMENT_PATH")
+    if not doc_path:
+        print("[remote-agent] FIREBASE_DOCUMENT_PATH not set. Skipping sync.")
+        return
+    try:
+        # Use simple document path format "collection/doc"
+        if "/" not in doc_path:
+            print(f"[remote-agent] Invalid document path: {doc_path}")
+            return
+            
+        coll_name, doc_name = doc_path.split("/")
+        data = {
+            "host": REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "127.0.0.1",
+            "port": REMOTE_PORT,
+            "token": REMOTE_ACCESS_TOKEN,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "agent": "python-agent",
+            "version": VERSION
+        }
+        db.collection(coll_name).document(doc_name).set(data, merge=True)
+        print(f"[remote-agent] Synced connection info to Firestore: {doc_path}")
+    except Exception as e:
+        print(f"[remote-agent] Firestore sync failed: {e}")
+
 
 
 app = FastAPI(title=APP_NAME, version=VERSION)
@@ -121,7 +149,6 @@ def get_project_lock(name: str) -> threading.Lock:
             _project_locks[name] = threading.Lock()
         return _project_locks[name]
 
-
 def is_path_safe(path: str) -> bool:
     if not path:
         return False
@@ -144,7 +171,6 @@ def is_path_safe(path: str) -> bool:
             return False
     return True
 
-
 def load_registry() -> Dict[str, str]:
     if os.path.exists(LOCAL_REGISTRY_PATH):
         try:
@@ -154,12 +180,10 @@ def load_registry() -> Dict[str, str]:
             return {}
     return {}
 
-
 def save_registry(registry: Dict[str, str]) -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(LOCAL_REGISTRY_PATH, "w", encoding="utf-8") as f:
         json.dump(registry, f, indent=2)
-
 
 def compute_registry() -> Dict[str, str]:
     with _registry_lock:
@@ -177,14 +201,12 @@ def compute_registry() -> Dict[str, str]:
         save_registry(registry)
         return registry
 
-
 def force_remove_readonly(func, path, excinfo):
     try:
         os.chmod(path, stat.S_IWRITE)
     except Exception:
         pass
     func(path)
-
 
 def backup_external_resources(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
@@ -211,7 +233,6 @@ def backup_external_resources(project_path: str) -> None:
             restore_map[pid] = p
     with open(os.path.join(assets_dir, "restore_map.json"), "w", encoding="utf-8") as f:
         json.dump(restore_map, f, indent=2)
-
 
 def restore_external_resources(project_path: str) -> None:
     assets_dir = os.path.join(project_path, "_omni_assets")
@@ -244,7 +265,6 @@ def restore_external_resources(project_path: str) -> None:
     except Exception:
         pass
 
-
 def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
@@ -268,21 +288,18 @@ def check_install_software(project_path: str) -> None:
         except Exception:
             pass
 
-
 def copy_tree(src: str, dst: str) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True)
 
-
 def find_android_studio() -> Optional[str]:
     candidates = [
-        r"C:\Program Files\Android\Android Studio\bin\studio64.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Android\Android Studio\bin\studio64.exe"),
+        r"C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\\Android\\Android Studio\\bin\\studio64.exe"),
     ]
     for path in candidates:
         if os.path.exists(path):
             return path
     return None
-
 
 def open_studio_project(name: str) -> Dict[str, str]:
     project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name)
@@ -298,7 +315,6 @@ def open_studio_project(name: str) -> Dict[str, str]:
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": "Studio launched"}
-
 
 def deactivate_project(name: str) -> Dict[str, str]:
     lock = get_project_lock(name)
@@ -320,7 +336,6 @@ def deactivate_project(name: str) -> Dict[str, str]:
         reg[name] = "Cloud"
         save_registry(reg)
         return {"status": "ok", "message": "Deactivated"}
-
 
 def activate_project(name: str) -> Dict[str, str]:
     lock = get_project_lock(name)
@@ -352,12 +367,11 @@ class CommandSession:
         self.started = datetime.datetime.now()
 
 
-async def send_ws(ws: WebSocket, payload: Dict[str, str]) -> None:
+async def send_ws(ws: WebSocket, payload: Dict[str, str]) -> None: 
     try:
         await ws.send_text(json.dumps(payload))
     except Exception:
         pass
-
 
 def start_command(loop: asyncio.AbstractEventLoop, ws: WebSocket, cmd: str, cwd: Optional[str], env_overrides: Optional[Dict[str, str]]) -> str:
     session_id = str(uuid.uuid4())
@@ -571,6 +585,7 @@ async def ws_terminal(ws: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
-    sync_to_firestore()
+    # sync_to_firestore() # Not defined
     print(f"{APP_NAME} listening on {REMOTE_BIND_HOST}:{REMOTE_PORT}")
-    uvicorn.run("remote_agent:app", host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)
+    sync_to_firestore()
+    uvicorn.run(app, host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)

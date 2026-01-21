@@ -25,8 +25,8 @@ LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
 ASSET_PATH = os.path.join(BASE_DIR, "assets")
 ICON_PATH = os.path.join(ASSET_PATH, "app_icon.png")
 
-DEFAULT_WORKSPACE = r"C:\\Projects"
-PROTECTED_PATHS = [r"C:\\Windows", r"C:\\Program Files", r"C:\\Program Files (x86)", r"C:\\Users", r"C:\\\"]   
+DEFAULT_WORKSPACE = "C:\\Projects"
+PROTECTED_PATHS = ["C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)", "C:\\Users", "C:\\"]   
 
 # Cloud/portable behavior
 CLOUD_META_DIRNAME = "_omni_sync"
@@ -206,11 +206,19 @@ class ProjectConfigWindow(ctk.CTkToplevel):
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, env):
-        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x550"); self.entries={}
-        self.fields = [("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"), ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"), ("GitHub Token","GITHUB_TOKEN"), ("Hidden Projects","HIDDEN_PROJECTS")]
+        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x650"); self.entries={}
+        self.fields = [
+            ("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"), 
+            ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"), 
+            ("GitHub Token","GITHUB_TOKEN"), 
+            ("Hidden Projects","HIDDEN_PROJECTS"),
+            ("Firebase Project ID", "FIREBASE_PROJECT_ID"),
+            ("Firebase Doc Path", "FIREBASE_DOCUMENT_PATH"),
+            ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS")
+        ]
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         for l,k in self.fields:
-            f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5); ctk.CTkLabel(f, text=l, width=150, anchor="w").pack(side="left")
+            f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5); ctk.CTkLabel(f, text=l, width=200, anchor="w").pack(side="left")
             e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
         ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=40).pack(fill="x", padx=20, pady=20)
         self.load()
@@ -340,7 +348,7 @@ class CollapsibleFrame(ctk.CTkFrame):
 
     def toggle(self, event=None):
         self.expanded = not self.expanded
-        self.lbl_title.configure(text=f"{('▼' if self.expanded else '▶')} {self.lbl_title.cget('text')[2:]}")
+        self.lbl_title.configure(text=f"{'▼' if self.expanded else '▶'} {self.lbl_title.cget('text')[2:]}")
         if self.expanded: self.content.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
         else: self.content.grid_forget()
 
@@ -473,7 +481,7 @@ class ProjectManagerApp(ctk.CTk):
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", side="bottom", padx=5, pady=5)
 
-        ctk.CTkButton(footer, text="+ New Project", command=self.show_new_project).pack(fill="x", pady=2)
+        ctk.CTkButton(footer, text="➕ New Project", command=self.show_new_project).pack(fill="x", pady=2)
 
         # Activity Log (Collapsible)
         self.log_container = CollapsibleFrame(footer, title="Activity Log")
@@ -742,7 +750,7 @@ class ProjectManagerApp(ctk.CTk):
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
-        hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
+        hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]    
         hidden.extend(["projectmanagerapp", "$recycle.bin"])
 
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
