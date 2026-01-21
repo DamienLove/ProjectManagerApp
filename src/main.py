@@ -86,8 +86,8 @@ class LoginWindow(ctk.CTkToplevel):
         self.title("Login")
         self.geometry("350x380")
         bring_to_front(self, parent)
-        self.parent = parent
-        self.protocol("WM_DELETE_WINDOW", self.parent.quit)
+        self.main_app = parent
+        self.protocol("WM_DELETE_WINDOW", self.main_app.on_close)
 
         ctk.CTkLabel(self, text="Email").pack(pady=(10,0))
         self.email_entry = ctk.CTkEntry(self, placeholder_text="Enter your email")
@@ -147,6 +147,14 @@ class LoginWindow(ctk.CTkToplevel):
             self.status_lbl.configure(text="Connection failed")
 
     def login(self):
+        # Find the actual ProjectManagerApp instance
+        app = self.main_app
+        if not hasattr(app, "save_setting"):
+            # Try to find it in global scope if self.main_app is just the tk interpreter
+            import __main__
+            if hasattr(__main__, "app"):
+                app = __main__.app
+
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
         if not email or not password:
@@ -160,19 +168,19 @@ class LoginWindow(ctk.CTkToplevel):
             data = resp.json()
             if resp.status_code == 200:
                 uid = data["localId"]
-                is_owner = (email.lower() == "me@damiennichols.com")
-                self.parent.save_setting("FIREBASE_UID", uid)
-                self.parent.save_setting("FIREBASE_EMAIL", email)
-                if is_owner: self.parent.save_setting("DEVELOPER_MODE", "1")
+                is_owner = email.lower() in ["me@damiennichols.com", "damien@dmnlat.com"]
+                app.save_setting("FIREBASE_UID", uid)
+                app.save_setting("FIREBASE_EMAIL", email)
+                if is_owner: app.save_setting("DEVELOPER_MODE", "1")
                 os.environ["FIREBASE_UID"] = uid
-                self.parent.firebase_uid = uid
-                if self.parent.db:
+                app.firebase_uid = uid
+                if app.db:
                     try:
-                        self.parent.db.collection("users").document(uid).set({
+                        app.db.collection("users").document(uid).set({
                             "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
                         }, merge=True)
                     except: pass
-                self.parent.show_main_app()
+                app.show_main_app()
                 self.destroy()
             else:
                 err = data.get("error", {}).get("message", "Login failed")
@@ -312,8 +320,8 @@ class SettingsWindow(ctk.CTkToplevel):
                     if k in self.entries: self.entries[k].insert(0, d.get(k,""))
     def save(self):
         with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
-        self.parent._sync_settings_to_cloud()
-        self.parent.reload_config(); self.destroy()
+        self.main_app._sync_settings_to_cloud()
+        self.main_app.reload_config(); self.destroy()
 
 class PopupMenu(ctk.CTkToplevel):
     def __init__(self, parent, widget, menu_items):
