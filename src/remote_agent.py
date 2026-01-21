@@ -231,12 +231,8 @@ def is_path_safe(path: str) -> bool:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
         return False
-    # Otherwise block only obviously dangerous roots.
-    for p in PROTECTED_PATHS:
-        p_abs = os.path.abspath(p)
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
-    return True
+    # Otherwise deny access.
+    return False
 
 def load_registry() -> Dict[str, str]:
     if os.path.exists(LOCAL_REGISTRY_PATH):
