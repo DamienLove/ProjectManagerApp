@@ -447,14 +447,12 @@ class ProjectManagerApp(ctk.CTk):
             with open(ENV_PATH, 'r') as f:
                 for line in f:
                     if line.startswith(f"{key}="):
-                        lines.append(f"{key}={value}
-")
+                        lines.append(f"{key}={value}\n")
                         found = True
                     else:
                         lines.append(line)
         if not found:
-            lines.append(f"{key}={value}
-")
+            lines.append(f"{key}={value}\n")
         with open(ENV_PATH, 'w') as f:
             f.writelines(lines)
         load_dotenv(ENV_PATH, override=True)
@@ -467,6 +465,7 @@ class ProjectManagerApp(ctk.CTk):
         self._cloud_meta_error_logged = False
         self._portable_cleanup_scheduled = False
         self.queue = queue.Queue()
+        self.agent_process = None
         self.withdraw() # Hide main window initially
 
         self.login_window = LoginWindow(self)
@@ -489,6 +488,7 @@ class ProjectManagerApp(ctk.CTk):
         self.deiconify() # Show main window
         self._init_compact_ui()
         self._start_tray_icon()
+        self._start_remote_agent()
 
         if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR)
         self.reload_config()
@@ -1049,6 +1049,30 @@ class ProjectManagerApp(ctk.CTk):
             else:
                 self.log(f"   > Skipping uninstall for {app} (in use by another project).")
 
+
+    def _start_remote_agent(self):
+        agent_script = os.path.join(BASE_DIR, "src", "remote_agent.py")
+        if os.path.exists(agent_script):
+            self.log("🚀 Starting Remote Agent...")
+            threading.Thread(target=self._run_agent_worker, args=(agent_script,), daemon=True).start()
+
+    def _run_agent_worker(self, script):
+        try:
+            import subprocess
+            # Start the agent as a subprocess
+            self.agent_process = subprocess.Popen([sys.executable, script], 
+                                                stdout=subprocess.PIPE, 
+                                                stderr=subprocess.STDOUT,
+                                                text=True,
+                                                bufsize=1)
+            # Log output in real-time
+            for line in self.agent_process.stdout:
+                if "listening on" in line or "error" in line.lower():
+                    self.log(f"📡 Agent: {line.strip()}")
+            self.agent_process.wait()
+        except Exception as e:
+            self.log(f"⚠️ Remote Agent error: {e}", "red")
+
     # --- GUI ACTIONS ---
     def open_studio(self, n):
         p = os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), n)
@@ -1080,7 +1104,8 @@ class ProjectManagerApp(ctk.CTk):
                 items.append(pystray.MenuItem("Deactivate + Cleanup", lambda i, it: self.deactivate_all_projects(cleanup=True, quit_after=True)))
             items.append(pystray.MenuItem("Quit", lambda i, it: self.queue.put("quit")))
             self.tray_icon = pystray.Icon("OmniSync", img, menu=pystray.Menu(*items))
-            self.tray_icon.run_detached()
+            import threading
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
         except: pass
     def show_new_project(self):
         d=ctk.CTkInputDialog(text="Name:", title="New Project"); bring_to_front(d, self); n=d.get_input() 
