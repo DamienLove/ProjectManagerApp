@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Omni Remote Agent"
+    Manufacturer="Damien Nichols"
+    Version="4.3.0"
+    UpgradeCode="52ed39bd-ca5b-436a-a9ae-692287e88ec7">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Omni Remote Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="$(var.SourceDir)\assets\app_icon.ico" />
+
+    <Feature Id="ProductFeature" Title="Omni Remote Agent" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="OmniRemoteAgent" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDir" Name="Omni Remote Agent" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Files Include="$(var.SourceDir)\dist\OmniRemoteAgent\**\*.*" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>
