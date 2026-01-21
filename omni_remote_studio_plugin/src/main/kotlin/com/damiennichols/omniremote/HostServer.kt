@@ -10,6 +10,7 @@ import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
 import io.javalin.Javalin
 import java.io.BufferedReader
+import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
 
@@ -21,6 +22,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
     private var server: Javalin? = null
     private val objectMapper = ObjectMapper()
+    private val defaultFirebaseProjectId = "omniremote-e7afd"
 
     fun start(port: Int, token: String) {
         if (server != null) {
@@ -140,8 +142,10 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             ensureFirebaseInitialized()
             val db = FirestoreClient.getFirestore()
             val props = PropertiesComponent.getInstance()
-            val docPath = System.getenv("FIREBASE_DOCUMENT_PATH") 
+            val env = loadEnvFile()
+            val docPath = System.getenv("FIREBASE_DOCUMENT_PATH")
                 ?: props.getValue("omniremote.firebaseDocPath")
+                ?: env["FIREBASE_DOCUMENT_PATH"]
                 
             if (docPath != null && docPath.contains('/')) {
                 val parts = docPath.split('/')
@@ -174,12 +178,16 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
         }
         try {
             val props = PropertiesComponent.getInstance()
+            val env = loadEnvFile()
             val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS")
                 ?: props.getValue("omniremote.firebaseCredentialsPath")
-            if (credentialsPath != null && credentialsPath.isNotBlank()) {
-                val serviceAccount = FileInputStream(credentialsPath)
-                val projectId = System.getenv("FIREBASE_PROJECT_ID")
+                ?: env["GOOGLE_APPLICATION_CREDENTIALS"]
+            val resolvedCredPath = resolveCredentialsPath(credentialsPath)
+            if (resolvedCredPath != null) {
+                val serviceAccount = FileInputStream(resolvedCredPath)
+                val projectId = (System.getenv("FIREBASE_PROJECT_ID")
                     ?: props.getValue("omniremote.firebaseProjectId")
+                    ?: env["FIREBASE_PROJECT_ID"]).orEmpty().ifBlank { defaultFirebaseProjectId }
                 val options = FirebaseOptions.builder()
                     .setCredentials(GoogleCredentials.fromStream(serviceAccount))
                     .setProjectId(projectId)
@@ -192,6 +200,57 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
         } catch (e: Exception) {
             onLog("Firebase initialization failed: ${e.message}")
         }
+    }
+
+    private fun resolveCredentialsPath(path: String?): String? {
+        if (path == null || path.isBlank()) {
+            return null
+        }
+        val file = File(path)
+        if (file.isFile) {
+            return file.absolutePath
+        }
+        if (!file.exists() || !file.isDirectory) {
+            return null
+        }
+        val jsonFiles = file.listFiles { f -> f.isFile && f.extension.equals("json", ignoreCase = true) }
+            ?: return null
+        for (candidate in jsonFiles) {
+            try {
+                val text = candidate.readText()
+                if (text.contains("\"type\": \"service_account\"")) {
+                    return candidate.absolutePath
+                }
+            } catch (_: Exception) {
+                // ignore unreadable files
+            }
+        }
+        return null
+    }
+
+    private fun loadEnvFile(): Map<String, String> {
+        val base = project.basePath ?: return emptyMap()
+        val envFile = File(base, "secrets.env")
+        if (!envFile.exists()) {
+            return emptyMap()
+        }
+        val env = mutableMapOf<String, String>()
+        envFile.readLines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                return@forEach
+            }
+            val idx = trimmed.indexOf('=')
+            if (idx <= 0) {
+                return@forEach
+            }
+            val key = trimmed.substring(0, idx).trim()
+            val value = trimmed.substring(idx + 1).trim()
+            if (key.isNotEmpty()) {
+                env[key] = value
+            }
+        }
+        return env
     }
 
     private fun executeCommand(command: String, workingDir: String?): CommandResponse {

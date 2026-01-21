@@ -24,6 +24,7 @@ import java.net.http.WebSocket
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.io.File
 import java.io.FileInputStream
 import javax.swing.DefaultListModel
 import javax.swing.JButton
@@ -43,6 +44,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
       private val MAX_TERMINAL_LINES = 2000
 
     private val props = PropertiesComponent.getInstance()
+    private val projectBasePath = project.basePath
     private val hostField = JTextField()
     private val hostServer = HostServer(project) { msg -> logHostMessage(msg) }
     private val portField = JTextField()
@@ -81,6 +83,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private val client = HttpClient.newBuilder().build()
     private val gson = Gson()
     private val defaultFirebaseApiKey = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+    private val defaultFirebaseProjectId = "omniremote-e7afd"
 
     init {
         loadSettings()
@@ -393,17 +396,90 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         firebaseCredentialsPathField.text = props.getValue("omniremote.firebaseCredentialsPath", "")
         firebaseApiKeyField.text = props.getValue("omniremote.firebaseApiKey", defaultFirebaseApiKey)
 
+        val envFile = loadEnvFile()
+        val envProjectId = (envFile["FIREBASE_PROJECT_ID"] ?: System.getenv("FIREBASE_PROJECT_ID"))?.trim().orEmpty()
+        val envDocPath = (envFile["FIREBASE_DOCUMENT_PATH"] ?: System.getenv("FIREBASE_DOCUMENT_PATH"))?.trim().orEmpty()
+        val envCredPath = (envFile["GOOGLE_APPLICATION_CREDENTIALS"] ?: System.getenv("GOOGLE_APPLICATION_CREDENTIALS"))?.trim().orEmpty()
+
+        if (firebaseProjectIdField.text.isBlank()) {
+            firebaseProjectIdField.text = if (envProjectId.isNotBlank()) envProjectId else defaultFirebaseProjectId
+        }
+
         val savedEmail = props.getValue("omniremote.firebaseEmail", "")
         if (savedEmail.isNotBlank()) {
             loginEmailField.text = savedEmail
             loginStatusLabel.text = "Saved user: $savedEmail"
         }
-        if (firebaseDocPathField.text.isBlank()) {
-            val savedUid = props.getValue("omniremote.firebaseUid", "")
-            if (savedUid.isNotBlank()) {
+        val savedUid = props.getValue("omniremote.firebaseUid", "")
+        val currentDocPath = firebaseDocPathField.text.trim()
+        if (currentDocPath.isBlank()) {
+            if (envDocPath.isNotBlank()) {
+                firebaseDocPathField.text = envDocPath
+            } else if (savedUid.isNotBlank()) {
+                firebaseDocPathField.text = "users/$savedUid"
+            }
+        } else if (!currentDocPath.startsWith("users/")) {
+            if (envDocPath.isNotBlank()) {
+                firebaseDocPathField.text = envDocPath
+            } else if (savedUid.isNotBlank()) {
                 firebaseDocPathField.text = "users/$savedUid"
             }
         }
+
+        if (firebaseCredentialsPathField.text.isBlank()) {
+            val detected = findServiceAccountPath()
+            firebaseCredentialsPathField.text = when {
+                envCredPath.isNotBlank() -> envCredPath
+                !detected.isNullOrBlank() -> detected
+                else -> ""
+            }
+        }
+    }
+
+    private fun loadEnvFile(): Map<String, String> {
+        val base = projectBasePath ?: return emptyMap()
+        val envFile = File(base, "secrets.env")
+        if (!envFile.exists()) {
+            return emptyMap()
+        }
+        val env = mutableMapOf<String, String>()
+        envFile.readLines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                return@forEach
+            }
+            val idx = trimmed.indexOf('=')
+            if (idx <= 0) {
+                return@forEach
+            }
+            val key = trimmed.substring(0, idx).trim()
+            val value = trimmed.substring(idx + 1).trim()
+            if (key.isNotEmpty()) {
+                env[key] = value
+            }
+        }
+        return env
+    }
+
+    private fun findServiceAccountPath(): String? {
+        val base = projectBasePath ?: return null
+        val secretsDir = File(base, "secrets")
+        if (!secretsDir.exists() || !secretsDir.isDirectory) {
+            return null
+        }
+        val jsonFiles = secretsDir.listFiles { f -> f.isFile && f.extension.equals("json", ignoreCase = true) }
+            ?: return null
+        for (file in jsonFiles) {
+            try {
+                val text = file.readText()
+                if (text.contains("\"type\": \"service_account\"")) {
+                    return file.absolutePath
+                }
+            } catch (_: Exception) {
+                // ignore unreadable files
+            }
+        }
+        return null
     }
 
     private fun saveSettings() {
@@ -728,7 +804,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                     ?.takeIf { it.isNotBlank() }
                     ?: firebaseProjectIdField.text.trim().ifBlank {
                         props.getValue("omniremote.firebaseProjectId", "")
-                    }
+                    }.ifBlank { defaultFirebaseProjectId }
                 val options = FirebaseOptions.builder()
                     .setCredentials(GoogleCredentials.fromStream(serviceAccount))
                     .setProjectId(projectId)

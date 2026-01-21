@@ -20,7 +20,8 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.2.0"
+VERSION = "4.3.0"
+OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
@@ -77,6 +78,48 @@ def bring_to_front(win, parent=None):
         win.focus_force()
     except Exception:
         pass
+
+def load_registry(app):
+    """Load merged registry without relying on instance attr lookup quirks."""
+    try:
+        local = app._load_local_reg()
+    except Exception:
+        local = {}
+    try:
+        cloud = app._load_cloud_reg()
+    except Exception:
+        cloud = {}
+    merged = {}
+    merged.update(cloud)
+    merged.update(local)
+    return merged
+
+def resolve_credentials_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    cleaned = path.strip().strip('"')
+    if not cleaned:
+        return None
+    if os.path.isfile(cleaned):
+        return cleaned
+    if os.path.isdir(cleaned):
+        try:
+            for name in os.listdir(cleaned):
+                if not name.lower().endswith(".json"):
+                    continue
+                candidate = os.path.join(cleaned, name)
+                if not os.path.isfile(candidate):
+                    continue
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    if "\"type\": \"service_account\"" in text:
+                        return candidate
+                except Exception:
+                    continue
+        except Exception:
+            return None
+    return None
 
 # --- UI WINDOWS ---
 
@@ -168,15 +211,17 @@ class LoginWindow(ctk.CTkToplevel):
             data = resp.json()
             if resp.status_code == 200:
                 uid = data["localId"]
-                is_owner = email.lower() in ["me@damiennichols.com", "damien@dmnlat.com"]
+                is_owner = email.lower() in OWNER_EMAILS
                 app.save_setting("FIREBASE_UID", uid)
                 app.save_setting("FIREBASE_EMAIL", email)
+                app.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
                 if is_owner: app.save_setting("DEVELOPER_MODE", "1")
                 os.environ["FIREBASE_UID"] = uid
                 app.firebase_uid = uid
-                if app.db:
+                db = app.__dict__.get("db", None)
+                if db:
                     try:
-                        app.db.collection("users").document(uid).set({
+                        db.collection("users").document(uid).set({
                             "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
                         }, merge=True)
                     except: pass
@@ -524,18 +569,35 @@ class ProjectManagerApp(ctk.CTk):
     def _init_firebase(self):
         self.db = None
         firebase_id = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
-        cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        cred_path = resolve_credentials_path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
         
         try:
-            if cred_path and os.path.exists(cred_path):
+            if cred_path:
                 cred = credentials.Certificate(cred_path)
                 firebase_admin.initialize_app(cred, {'projectId': firebase_id})
                 self.db = firestore.client()
                 self.log("📡 Firebase initialized.")
+                self._ensure_user_doc()
             else:
                 self.log("⚠️ Firebase credentials not found. Cloud sync disabled.")
         except Exception as e:
             self.log(f"⚠️ Firebase init failed: {e}")
+
+    def _ensure_user_doc(self):
+        if not self.db:
+            return
+        uid = self.firebase_uid or os.getenv("FIREBASE_UID")
+        email = os.getenv("FIREBASE_EMAIL", "").strip()
+        if not uid:
+            return
+        data = {"last_login": firestore.SERVER_TIMESTAMP}
+        if email:
+            data["email"] = email
+            data["role"] = "owner" if email.lower() in OWNER_EMAILS else "user"
+        try:
+            self.db.collection("users").document(uid).set(data, merge=True)
+        except Exception as e:
+            self.log(f"⚠️ Failed to save user profile: {e}")
 
     def sync_to_firestore(self):
         if not self.db:
@@ -554,7 +616,7 @@ class ProjectManagerApp(ctk.CTk):
                 root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
                 drive_root = self._drive_root()
                 
-                registry = self._load_reg()
+                registry = load_registry(self)
                 projects_ref = self.db.collection("users").document(uid).collection("projects")
                 
                 batch = self.db.batch()
@@ -611,6 +673,11 @@ class ProjectManagerApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
+        # Bind to instance to avoid Tk __getattr__ fallback on missing attrs.
+        self._load_reg = lambda: load_registry(self)
+        # Ensure attributes exist before login flow touches them.
+        self.db = None
+        self.firebase_uid = None
         self.title(APP_NAME)
         self.geometry("360x800")
         self.tray_icon = None
@@ -836,7 +903,7 @@ class ProjectManagerApp(ctk.CTk):
             self.log("❌ Error: Cloud meta folder unavailable.", "red")
             return
         # Ensure cloud registry + settings are up to date
-        self._save_reg(self._load_reg())
+        self._save_reg(load_registry(self))
         self._sync_settings_to_cloud()
 
         target_root = os.path.join(meta, CLOUD_APP_DIRNAME)
@@ -911,7 +978,7 @@ class ProjectManagerApp(ctk.CTk):
             return
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
-        reg = self._load_reg()
+        reg = load_registry(self)
         local_names = [n for n, s in reg.items() if s == "Local"]
         if not local_names:
             self.log("ℹ️ No local projects to deactivate.")
@@ -1059,7 +1126,7 @@ class ProjectManagerApp(ctk.CTk):
             shutil.rmtree(src, onerror=force_remove_readonly)
 
             self.log(f"✅ {name} Offloaded Successfully.")
-            reg = self._load_reg(); reg[name] = "Cloud"; self._save_reg(reg)
+            reg = load_registry(self); reg[name] = "Cloud"; self._save_reg(reg)
             self.after(0, self._refresh_projects)
             self.sync_to_firestore()
         except Exception as e:
@@ -1110,7 +1177,7 @@ class ProjectManagerApp(ctk.CTk):
             # shutil.rmtree(src, onerror=force_remove_readonly)
 
             self.log(f"✅ {name} Restored & Ready.")
-            reg = self._load_reg(); reg[name] = "Local"; self._save_reg(reg)
+            reg = load_registry(self); reg[name] = "Local"; self._save_reg(reg)
             self.after(0, self._refresh_projects)
             self.sync_to_firestore()
         except Exception as e:
@@ -1204,7 +1271,7 @@ class ProjectManagerApp(ctk.CTk):
 
         # Get all other active projects
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
-        all_projects = self._load_reg()
+        all_projects = load_registry(self)
         other_active_projects = [p for p, s in all_projects.items() if s == "Local" and p != name]        
 
         # Get all software dependencies from other active projects
@@ -1264,7 +1331,7 @@ class ProjectManagerApp(ctk.CTk):
         except: pass
 
     def forget_project(self, name):
-        reg = self._load_reg(); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()        
+        reg = load_registry(self); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()        
 
     def log(self, m, col=None):
         self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled")

@@ -20,7 +20,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.2.0"
+VERSION = "4.3.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -61,19 +61,45 @@ if not REMOTE_ACCESS_TOKEN:
     print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
 
 # Initialize Firebase
-FIREBASE_PROJECT_ID = "omniremote-e7afd" 
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd") 
+
+def resolve_credentials_path(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    cleaned = path.strip().strip('"')
+    if not cleaned:
+        return None
+    if os.path.isfile(cleaned):
+        return cleaned
+    if os.path.isdir(cleaned):
+        try:
+            for name in os.listdir(cleaned):
+                if not name.lower().endswith(".json"):
+                    continue
+                candidate = os.path.join(cleaned, name)
+                if not os.path.isfile(candidate):
+                    continue
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    if "\"type\": \"service_account\"" in text:
+                        return candidate
+                except Exception:
+                    continue
+        except Exception:
+            return None
+    return None
 
 try:
-    if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-        cred = credentials.ApplicationDefault()
-        firebase_admin.initialize_app(cred, {
-            'projectId': FIREBASE_PROJECT_ID,
-        })
+    cred_path = resolve_credentials_path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    if cred_path:
+        cred = credentials.Certificate(cred_path)
+        firebase_admin.initialize_app(cred, {'projectId': FIREBASE_PROJECT_ID})
         db = firestore.client()
         print("[remote-agent] Firebase initialized.")
     else:
         db = None
-        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
+        print("[remote-agent] Firebase not initialized (Credentials path not set).")
 except Exception as e:
     db = None
     print(f"[remote-agent] Firebase initialization failed: {e}")
@@ -83,6 +109,10 @@ def sync_to_firestore():
     if not db:
         return
     uid = os.getenv("FIREBASE_UID")
+    if not uid:
+        doc_path = os.getenv("FIREBASE_DOCUMENT_PATH", "")
+        if doc_path.startswith("users/") and "/" in doc_path:
+            uid = doc_path.split("/", 2)[1]
     if not uid:
         print("[remote-agent] FIREBASE_UID not set. Skipping sync.")
         return
