@@ -78,6 +78,7 @@ except Exception as e:
     db = None
     print(f"[remote-agent] Firebase initialization failed: {e}")
 
+
 def sync_to_firestore():
     if not db:
         return
@@ -86,7 +87,8 @@ def sync_to_firestore():
         print("[remote-agent] FIREBASE_UID not set. Skipping sync.")
         return
     try:
-        data = {
+        # 1. Sync connection info
+        conn_data = {
             "host": REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "127.0.0.1",
             "port": REMOTE_PORT,
             "token": REMOTE_ACCESS_TOKEN,
@@ -94,10 +96,47 @@ def sync_to_firestore():
             "agent": "python-agent",
             "version": VERSION
         }
-        db.collection("users").document(uid).collection("config").document("connection").set(data, merge=True)
-        print(f"[remote-agent] Synced connection info to Firestore for UID: {uid}")
+        user_ref = db.collection("users").document(uid)
+        user_ref.collection("config").document("connection").set(conn_data, merge=True)
+        
+        # 2. Sync projects
+        registry = compute_registry()
+        projects_ref = user_ref.collection("projects")
+        
+        # We'll use a batch for efficiency
+        batch = db.batch()
+        
+        for name, status in registry.items():
+            if name.lower() in HIDDEN_PROJECTS:
+                continue
+                
+            project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name) if status == "Local" else os.path.join(DRIVE_ROOT_FOLDER_ID or "", name)
+            manifest_path = os.path.join(project_path, "omni.json")
+            
+            project_data = {
+                "name": name,
+                "status": status,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            }
+            
+            # Load extra info from omni.json if it exists
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    # Merge manifest data (software, external paths, etc)
+                    project_data.update(manifest)
+                except Exception:
+                    pass
+            
+            doc_ref = projects_ref.document(name)
+            batch.set(doc_ref, project_data, merge=True)
+            
+        batch.commit()
+        print(f"[remote-agent] Synced connection info and {len(registry)} projects to Firestore for UID: {uid}")
     except Exception as e:
         print(f"[remote-agent] Firestore sync failed: {e}")
+
 
 
 
@@ -448,6 +487,7 @@ async def api_activate_project(name: str, request: Request):
     result = await loop.run_in_executor(None, activate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
+    sync_to_firestore()
     return result
 
 
@@ -457,6 +497,7 @@ async def api_deactivate_project(name: str, request: Request):
     result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
+    sync_to_firestore()
     return result
 
 
@@ -466,6 +507,7 @@ async def api_open_studio_project(name: str, request: Request):
     result = open_studio_project(name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
+    sync_to_firestore()
     return result
 
 

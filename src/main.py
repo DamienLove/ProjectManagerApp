@@ -15,6 +15,8 @@ import json
 import hashlib
 import tempfile
 import queue
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
@@ -440,6 +442,73 @@ class ProjectCard(ctk.CTkFrame):
         self.lbl.bind("<Button-1>", self.toggle)
 
 class ProjectManagerApp(ctk.CTk):
+
+    def _init_firebase(self):
+        self.db = None
+        firebase_id = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
+        cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        
+        try:
+            if cred_path and os.path.exists(cred_path):
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred, {'projectId': firebase_id})
+                self.db = firestore.client()
+                self.log("📡 Firebase initialized.")
+            else:
+                self.log("⚠️ Firebase credentials not found. Cloud sync disabled.")
+        except Exception as e:
+            self.log(f"⚠️ Firebase init failed: {e}")
+
+    def sync_to_firestore(self):
+        if not self.db:
+            return
+        uid = self.firebase_uid or os.getenv("FIREBASE_UID")
+        if not uid:
+            return
+            
+        def worker():
+            try:
+                # 1. Sync connection info
+                # (Desktop doesn't usually host the agent, but it might have its own token)
+                # For now, let's focus on projects.
+                
+                # 2. Sync projects
+                root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+                drive_root = self._drive_root()
+                
+                registry = self._load_reg()
+                projects_ref = self.db.collection("users").document(uid).collection("projects")
+                
+                batch = self.db.batch()
+                for name, status in registry.items():
+                    if name.lower() in HIDDEN_PROJECTS: continue
+                    
+                    project_path = os.path.join(root, name) if status == "Local" else os.path.join(drive_root or "", name)
+                    manifest_path = os.path.join(project_path, "omni.json")
+                    
+                    project_data = {
+                        "name": name,
+                        "status": status,
+                        "updated_at": firestore.SERVER_TIMESTAMP
+                    }
+                    
+                    if os.path.exists(manifest_path):
+                        try:
+                            with open(manifest_path, "r", encoding="utf-8") as f:
+                                manifest = json.load(f)
+                            project_data.update(manifest)
+                        except Exception: pass
+                        
+                    doc_ref = projects_ref.document(name)
+                    batch.set(doc_ref, project_data, merge=True)
+                
+                batch.commit()
+                self.log(f"✅ Synced {len(registry)} projects to Firestore.")
+            except Exception as e:
+                self.log(f"⚠️ Firestore sync failed: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def save_setting(self, key, value):
         lines = []
         found = False
@@ -491,6 +560,7 @@ class ProjectManagerApp(ctk.CTk):
         self._start_remote_agent()
 
         if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR)
+        self._init_firebase()
         self.reload_config()
 
     def _init_compact_ui(self):
@@ -807,6 +877,7 @@ class ProjectManagerApp(ctk.CTk):
             # Create Card
             card = ProjectCard(self.project_list, self, name, status)
             self.project_cards[name] = card
+        self.sync_to_firestore()
 
     def deactivate_project(self, name):
         card = self.project_cards.get(name)
@@ -884,6 +955,7 @@ class ProjectManagerApp(ctk.CTk):
             self.log(f"✅ {name} Offloaded Successfully.")
             reg = self._load_reg(); reg[name] = "Cloud"; self._save_reg(reg)
             self.after(0, self._refresh_projects)
+            self.sync_to_firestore()
         except Exception as e:
             self.log(f"❌ Transfer Failed: {e}", "red")
 
@@ -934,6 +1006,7 @@ class ProjectManagerApp(ctk.CTk):
             self.log(f"✅ {name} Restored & Ready.")
             reg = self._load_reg(); reg[name] = "Local"; self._save_reg(reg)
             self.after(0, self._refresh_projects)
+            self.sync_to_firestore()
         except Exception as e:
             self.log(f"❌ Restore Failed: {e}", "red")
 
