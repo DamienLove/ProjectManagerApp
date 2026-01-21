@@ -109,10 +109,9 @@ fun OmniRemoteApp() {
     val scope = rememberCoroutineScope()
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    val expectedEmail = "me@damiennichols.com"
     val auth = remember { FirebaseAuth.getInstance() }
-    var authed by remember { mutableStateOf(auth.currentUser?.email?.equals(expectedEmail, true) == true) }
-    var authEmail by rememberSaveable { mutableStateOf(expectedEmail) }
+    var authed by remember { mutableStateOf(auth.currentUser != null) }
+    var authEmail by rememberSaveable { mutableStateOf("") }
     var authPassword by rememberSaveable { mutableStateOf("") }
     var authBusy by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
@@ -146,7 +145,7 @@ fun OmniRemoteApp() {
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { fbAuth ->
             val email = fbAuth.currentUser?.email
-            authed = email != null && email.equals(expectedEmail, true)
+            authed = email != null
         }
         auth.addAuthStateListener(listener)
         onDispose {
@@ -184,44 +183,6 @@ fun OmniRemoteApp() {
         activeSessionId = null
         status = "disconnected"
         projectsLoaded = false
-    }
-
-    fun signIn() {
-        val email = authEmail.trim()
-        if (email.isBlank() || authPassword.isBlank()) {
-            authError = "Email and password required"
-            return
-        }
-        if (!email.equals(expectedEmail, true)) {
-            authError = "Use $expectedEmail"
-            return
-        }
-        authBusy = true
-        authError = null
-        auth.signInWithEmailAndPassword(email, authPassword)
-            .addOnSuccessListener {
-                authBusy = false
-                authPassword = ""
-                val signedInEmail = auth.currentUser?.email
-                if (signedInEmail == null || !signedInEmail.equals(expectedEmail, true)) {
-                    auth.signOut()
-                    authError = "Signed in as $signedInEmail. Use $expectedEmail."
-                } else {
-                    status = "signed in"
-                }
-            }
-            .addOnFailureListener { e ->
-                authBusy = false
-                authError = e.message ?: "Sign-in failed"
-            }
-    }
-
-    fun signOut() {
-        disconnectWebSocket()
-        auth.signOut()
-        authPassword = ""
-        authError = null
-        status = "signed out"
     }
 
     fun connectWebSocket() {
@@ -292,26 +253,6 @@ fun OmniRemoteApp() {
         status = "connecting"
     }
 
-    fun sendRun(cmd: String) {
-        val ws = socket ?: return
-        if (cmd.isBlank()) return
-        val payload = JSONObject()
-        payload.put("type", "run")
-        payload.put("cmd", cmd)
-        if (cwd.isNotBlank()) payload.put("cwd", cwd)
-        ws.send(payload.toString())
-    }
-
-    fun sendStdin(text: String) {
-        val ws = socket ?: return
-        val sid = activeSessionId ?: return
-        val payload = JSONObject()
-        payload.put("type", "stdin")
-        payload.put("sessionId", sid)
-        payload.put("data", text)
-        ws.send(payload.toString())
-    }
-
     suspend fun fetchProjects() {
         val cleanHost = normalizedHost()
         val cleanToken = token.trim()
@@ -342,27 +283,6 @@ fun OmniRemoteApp() {
         projects.addAll(list)
     }
 
-    suspend fun postProjectAction(name: String, action: String) {
-        val cleanHost = normalizedHost()
-        val cleanToken = token.trim()
-        if (cleanHost.isBlank() || cleanToken.isBlank()) {
-            throw RuntimeException("Host and token required")
-        }
-        val baseHost = buildBaseHost(pmPort)
-        val scheme = if (secure) "https" else "http"
-        val url = "$scheme://$baseHost/api/projects/$name/$action"
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("X-Omni-Token", cleanToken)
-            .post("".toRequestBody("application/json".toMediaType()))
-            .build()
-        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
-        if (!response.isSuccessful) {
-            val body = response.body?.string() ?: ""
-            throw RuntimeException("${response.code}: $body")
-        }
-    }
-
     fun refreshProjectsAsync() {
         scope.launch {
             try {
@@ -377,13 +297,16 @@ fun OmniRemoteApp() {
     }
 
     fun fetchCloudConfig() {
-        if (!authed) {
+        val user = auth.currentUser
+        if (user == null) {
             status = "sign in required"
             return
         }
         status = "loading cloud config"
         FirebaseFirestore.getInstance()
-            .collection("omniremote")
+            .collection("users")
+            .document(user.uid)
+            .collection("config")
             .document("connection")
             .get()
             .addOnSuccessListener { doc ->
@@ -430,10 +353,90 @@ fun OmniRemoteApp() {
                     secure = secureOverride
                 }
                 status = "cloud config loaded"
+                if (host.isNotBlank() && token.isNotBlank()) {
+                    connectWebSocket()
+                    refreshProjectsAsync()
+                }
             }
             .addOnFailureListener { e ->
                 status = "cloud config error: ${e.message}"
             }
+    }
+
+    fun signIn() {
+        val email = authEmail.trim()
+        if (email.isBlank() || authPassword.isBlank()) {
+            authError = "Email and password required"
+            return
+        }
+        authBusy = true
+        authError = null
+        auth.signInWithEmailAndPassword(email, authPassword)
+            .addOnSuccessListener {
+                authBusy = false
+                authPassword = ""
+                val signedInEmail = auth.currentUser?.email
+                if (signedInEmail == null) {
+                    auth.signOut()
+                    authError = "Sign in failed"
+                } else {
+                    status = "signed in"
+                    fetchCloudConfig()
+                }
+            }
+            .addOnFailureListener { e ->
+                authBusy = false
+                authError = e.message ?: "Sign-in failed"
+            }
+    }
+
+    fun signOut() {
+        disconnectWebSocket()
+        auth.signOut()
+        authPassword = ""
+        authError = null
+        status = "signed out"
+    }
+
+    fun sendRun(cmd: String) {
+        val ws = socket ?: return
+        if (cmd.isBlank()) return
+        val payload = JSONObject()
+        payload.put("type", "run")
+        payload.put("cmd", cmd)
+        if (cwd.isNotBlank()) payload.put("cwd", cwd)
+        ws.send(payload.toString())
+    }
+
+    fun sendStdin(text: String) {
+        val ws = socket ?: return
+        val sid = activeSessionId ?: return
+        val payload = JSONObject()
+        payload.put("type", "stdin")
+        payload.put("sessionId", sid)
+        payload.put("data", text)
+        ws.send(payload.toString())
+    }
+
+    suspend fun postProjectAction(name: String, action: String) {
+        val cleanHost = normalizedHost()
+        val cleanToken = token.trim()
+        if (cleanHost.isBlank() || cleanToken.isBlank()) {
+            throw RuntimeException("Host and token required")
+        }
+        val baseHost = buildBaseHost(pmPort)
+        val scheme = if (secure) "https" else "http"
+        val url = "$scheme://$baseHost/api/projects/$name/$action"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("X-Omni-Token", cleanToken)
+            .post("".toRequestBody("application/json".toMediaType()))
+            .build()
+        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+        if (!response.isSuccessful) {
+            val body = response.body?.string() ?: ""
+            throw RuntimeException("${response.code}: $body")
+        }
     }
 
     LaunchedEffect(connected, projectsLoaded) {
@@ -465,7 +468,6 @@ fun OmniRemoteApp() {
                 showPassword = showPassword,
                 busy = authBusy,
                 error = authError,
-                expectedEmail = expectedEmail,
                 onEmailChange = { authEmail = it },
                 onPasswordChange = { authPassword = it },
                 onShowPasswordChange = { showPassword = it },
@@ -581,7 +583,6 @@ private fun LoginScreen(
     showPassword: Boolean,
     busy: Boolean,
     error: String?,
-    expectedEmail: String,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onShowPasswordChange: (Boolean) -> Unit,
@@ -653,12 +654,6 @@ private fun LoginScreen(
                 ) {
                     Text(if (busy) "Signing in..." else "Sign In")
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Authorized email: $expectedEmail",
-                    color = TextMuted,
-                    fontSize = 12.sp
-                )
                 if (!error.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = error, color = Warning, fontSize = 12.sp)

@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import os
+import requests
 import threading
 import time
 from dotenv import load_dotenv
@@ -89,15 +90,27 @@ class LoginWindow(ctk.CTkToplevel):
         ctk.CTkButton(self, text="Login", command=self.login).pack(pady=20)
 
     def login(self):
-        # Placeholder for real authentication
-        email = self.email_entry.get()
-        password = self.password_entry.get()
-        if email and password:
-            self.parent.show_main_app()
-            self.destroy()
-        else:
-            # You can add an error message here
-            pass
+        email = self.email_entry.get().strip()
+        password = self.password_entry.get().strip()
+        if not email or not password:
+            return
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+            data = resp.json()
+            if resp.status_code == 200:
+                uid = data["localId"]
+                os.environ["FIREBASE_UID"] = uid
+                self.parent.firebase_uid = uid
+                self.parent.save_setting("FIREBASE_UID", uid)
+                self.parent.show_main_app()
+                self.destroy()
+            else:
+                err = data.get("error", {}).get("message", "Login failed")
+                print(f"Login error: {err}")
+        except Exception as e:
+            print(f"Connection error: {e}")
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
@@ -427,6 +440,25 @@ class ProjectCard(ctk.CTkFrame):
         self.lbl.bind("<Button-1>", self.toggle)
 
 class ProjectManagerApp(ctk.CTk):
+    def save_setting(self, key, value):
+        lines = []
+        found = False
+        if os.path.exists(ENV_PATH):
+            with open(ENV_PATH, 'r') as f:
+                for line in f:
+                    if line.startswith(f"{key}="):
+                        lines.append(f"{key}={value}
+")
+                        found = True
+                    else:
+                        lines.append(line)
+        if not found:
+            lines.append(f"{key}={value}
+")
+        with open(ENV_PATH, 'w') as f:
+            f.writelines(lines)
+        load_dotenv(ENV_PATH, override=True)
+
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)

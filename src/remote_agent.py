@@ -61,17 +61,19 @@ if not REMOTE_ACCESS_TOKEN:
     print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
 
 # Initialize Firebase
+FIREBASE_PROJECT_ID = "omniremote-e7afd" 
+
 try:
     if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
         cred = credentials.ApplicationDefault()
         firebase_admin.initialize_app(cred, {
-            'projectId': os.getenv("FIREBASE_PROJECT_ID"),
+            'projectId': FIREBASE_PROJECT_ID,
         })
         db = firestore.client()
         print("[remote-agent] Firebase initialized.")
     else:
         db = None
-        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")        
+        print("[remote-agent] Firebase not initialized (GOOGLE_APPLICATION_CREDENTIALS not set).")
 except Exception as e:
     db = None
     print(f"[remote-agent] Firebase initialization failed: {e}")
@@ -79,17 +81,11 @@ except Exception as e:
 def sync_to_firestore():
     if not db:
         return
-    doc_path = os.getenv("FIREBASE_DOCUMENT_PATH")
-    if not doc_path:
-        print("[remote-agent] FIREBASE_DOCUMENT_PATH not set. Skipping sync.")
+    uid = os.getenv("FIREBASE_UID")
+    if not uid:
+        print("[remote-agent] FIREBASE_UID not set. Skipping sync.")
         return
     try:
-        # Use simple document path format "collection/doc"
-        if "/" not in doc_path:
-            print(f"[remote-agent] Invalid document path: {doc_path}")
-            return
-            
-        coll_name, doc_name = doc_path.split("/")
         data = {
             "host": REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "127.0.0.1",
             "port": REMOTE_PORT,
@@ -98,8 +94,8 @@ def sync_to_firestore():
             "agent": "python-agent",
             "version": VERSION
         }
-        db.collection(coll_name).document(doc_name).set(data, merge=True)
-        print(f"[remote-agent] Synced connection info to Firestore: {doc_path}")
+        db.collection("users").document(uid).collection("config").document("connection").set(data, merge=True)
+        print(f"[remote-agent] Synced connection info to Firestore for UID: {uid}")
     except Exception as e:
         print(f"[remote-agent] Firestore sync failed: {e}")
 
