@@ -139,8 +139,15 @@ class LoginWindow(ctk.CTkToplevel):
         if email_saved: self.email_entry.insert(0, email_saved)
 
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
-        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
-        self.password_entry.pack(fill="x", padx=20)
+
+        self.pwd_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.pwd_frame.pack(fill="x", padx=20)
+
+        self.password_entry = ctk.CTkEntry(self.pwd_frame, placeholder_text="Enter your password", show="*")
+        self.password_entry.pack(side="left", fill="x", expand=True)
+
+        self.toggle_pwd_btn = ctk.CTkButton(self.pwd_frame, text="👁", width=30, fg_color="transparent", text_color="gray", hover_color=("gray85", "gray25"), command=self.toggle_password)
+        self.toggle_pwd_btn.pack(side="right", padx=(5, 0))
 
         self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
         self.status_lbl.pack(pady=(5,0))
@@ -151,6 +158,14 @@ class LoginWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
+
+    def toggle_password(self):
+        if self.password_entry.cget("show") == "*":
+            self.password_entry.configure(show="")
+            self.toggle_pwd_btn.configure(text="🔒")
+        else:
+            self.password_entry.configure(show="*")
+            self.toggle_pwd_btn.configure(text="👁")
 
     def register(self):
         email = self.email_entry.get().strip()
