@@ -84,7 +84,7 @@ class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Login")
-        self.geometry("350x350")
+        self.geometry("350x380")
         bring_to_front(self, parent)
         self.parent = parent
         self.protocol("WM_DELETE_WINDOW", self.parent.quit)
@@ -102,10 +102,10 @@ class LoginWindow(ctk.CTkToplevel):
         self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
         self.status_lbl.pack(pady=(5,0))
 
-        btn_row1 = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row1.pack(pady=(10,0))
-        ctk.CTkButton(btn_row1, text="Login", width=100, command=self.login).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row1, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=10)
+        ctk.CTkButton(btn_row, text="Login", width=100, command=self.login).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
 
@@ -115,23 +115,19 @@ class LoginWindow(ctk.CTkToplevel):
         if not email or not password:
             self.status_lbl.configure(text="Email and password required")
             return
-        if len(password) < 6:
-            self.status_lbl.configure(text="Password must be 6+ chars")
-            return
         self.status_lbl.configure(text="Registering...", text_color="white")
         api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
         try:
             resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
-            data = resp.json()
             if resp.status_code == 200:
                 self.status_lbl.configure(text="Account created! Logging in...", text_color="green")
                 self.login()
             else:
-                err = data.get("error", {}).get("message", "Registration failed")
-                self.status_lbl.configure(text=f"Error: {err}", text_color="red")
-        except Exception as e:
-            self.status_lbl.configure(text="Connection error", text_color="red")
+                err = resp.json().get("error", {}).get("message", "Registration failed")
+                self.status_lbl.configure(text=f"Error: {err}")
+        except:
+            self.status_lbl.configure(text="Connection error")
 
     def reset_password(self):
         email = self.email_entry.get().strip()
@@ -146,11 +142,10 @@ class LoginWindow(ctk.CTkToplevel):
                 self.status_lbl.configure(text="Reset email sent!", text_color="green")
             else:
                 err = resp.json().get("error", {}).get("message", "Error")
-                self.status_lbl.configure(text=f"Error: {err}", text_color="red")
-        except Exception as e:
-            self.status_lbl.configure(text="Connection failed", text_color="red")
+                self.status_lbl.configure(text=f"Error: {err}")
+        except:
+            self.status_lbl.configure(text="Connection failed")
 
-    
     def login(self):
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
@@ -168,36 +163,23 @@ class LoginWindow(ctk.CTkToplevel):
                 is_owner = (email.lower() == "me@damiennichols.com")
                 self.parent.save_setting("FIREBASE_UID", uid)
                 self.parent.save_setting("FIREBASE_EMAIL", email)
-                if is_owner:
-                    self.parent.save_setting("DEVELOPER_MODE", "1")
-                
+                if is_owner: self.parent.save_setting("DEVELOPER_MODE", "1")
                 os.environ["FIREBASE_UID"] = uid
                 self.parent.firebase_uid = uid
-                
-                # Tag user in Firestore
                 if self.parent.db:
                     try:
                         self.parent.db.collection("users").document(uid).set({
-                            "email": email,
-                            "role": "owner" if is_owner else "user",
-                            "last_login": firestore.SERVER_TIMESTAMP
+                            "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
                         }, merge=True)
                     except: pass
-
                 self.parent.show_main_app()
                 self.destroy()
             else:
                 err = data.get("error", {}).get("message", "Login failed")
-                if err == "INVALID_LOGIN_CREDENTIALS":
-                    self.status_lbl.configure(text="Invalid email or password", text_color="red")
-                else:
-                    self.status_lbl.configure(text=f"Error: {err}", text_color="red")
-        except requests.exceptions.RequestException as e:
-            self.status_lbl.configure(text=f"Network error: {str(e)[:40]}", text_color="red")
-            print(f"Request failed: {e}")
+                self.status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
         except Exception as e:
-            self.status_lbl.configure(text=f"System error: {str(e)[:40]}", text_color="red")
-            print(f"Login class error: {e}")
+            self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
@@ -597,18 +579,23 @@ class ProjectManagerApp(ctk.CTk):
     def save_setting(self, key, value):
         lines = []
         found = False
+        value = str(value).replace('\0', '').strip()
         if os.path.exists(ENV_PATH):
-            with open(ENV_PATH, 'r') as f:
-                for line in f:
-                    if line.startswith(f"{key}="):
-                        lines.append(f"{key}={value}\n")
+            try:
+                with open(ENV_PATH, 'rb') as f:
+                    raw = f.read().replace(b'\x00', b'')
+                text = raw.decode('utf-8', errors='ignore')
+                for line in text.splitlines():
+                    if line.strip().startswith(f"{key}="):
+                        lines.append(f"{key}={value}")
                         found = True
                     else:
                         lines.append(line)
+            except: pass
         if not found:
-            lines.append(f"{key}={value}\n")
-        with open(ENV_PATH, 'w') as f:
-            f.writelines(lines)
+            lines.append(f"{key}={value}")
+        with open(ENV_PATH, 'w', encoding='utf-8') as f:
+            f.write("\n".join(lines) + "\n")
         load_dotenv(ENV_PATH, override=True)
 
     def __init__(self):
