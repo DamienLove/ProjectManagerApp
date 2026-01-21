@@ -7,14 +7,14 @@ Omni Project Remote allows you to control your workstation from your phone using
 1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
 2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
-## ?? Downloads (V3 Alpha)
+## ?? Downloads (v4.1.0)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
-| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/V3/OmniProjectRemote.apk) | Mobile Client |
-| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/V3/AndroidStudioPlugin.zip) | **New: Includes Host Mode** |
-| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V3/OmniRemoteAgentSetup.exe) | Standalone Installer |
-| **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/V3/OmniRemoteAgentPortable.exe) | No-install version |
+| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniProjectRemote.apk) | Mobile Client |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/AndroidStudioPlugin.zip) | **New: Includes Host Mode** |
+| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
+| **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniRemoteAgentPortable.exe) | No-install version |
 
 ## Quick Start
 
