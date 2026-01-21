@@ -14,7 +14,7 @@ Omni Project Remote allows you to control your workstation from your phone using
 | **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniProjectRemote.apk) | Mobile Client |
 | **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/AndroidStudioPlugin.zip) | **New: Includes Host Mode** |
 | **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
-| **Remote Agent** | [OmniRemoteAgentPortable.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniRemoteAgentPortable.exe) | No-install version |
+| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.1.0/OmniProjectSync.exe) | Main GUI (No-install) |
 
 ## Quick Start
 
