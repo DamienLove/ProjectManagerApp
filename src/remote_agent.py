@@ -20,7 +20,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "0.1.0"
+VERSION = "4.2.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -90,13 +90,15 @@ def sync_to_firestore():
         # 1. Sync connection info
         conn_data = {
             "host": REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "127.0.0.1",
-            "port": REMOTE_PORT,
+            "pmPort": REMOTE_PORT,
+            "idePort": REMOTE_PORT,
             "token": REMOTE_ACCESS_TOKEN,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "agent": "python-agent",
             "version": VERSION
         }
         user_ref = db.collection("users").document(uid)
+        user_ref.set(conn_data, merge=True)
         user_ref.collection("config").document("connection").set(conn_data, merge=True)
         
         # 2. Sync projects

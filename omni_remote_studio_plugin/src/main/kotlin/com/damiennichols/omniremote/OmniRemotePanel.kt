@@ -1,5 +1,10 @@
 package com.damiennichols.omniremote
 
+import com.google.auth.oauth2.GoogleCredentials
+import com.google.cloud.firestore.SetOptions
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
+import com.google.firebase.cloud.FirestoreClient
 import com.google.gson.Gson
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.ApplicationManager
@@ -19,6 +24,7 @@ import java.net.http.WebSocket
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.io.FileInputStream
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -59,14 +65,14 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private var terminalSessionId: String? = null
 
     // Host Mode
-    private val hostPortField = JTextField("8765")
+    private val hostPortField = JTextField("8766")
     private val hostTokenField = JPasswordField()
     private val hostStatusLabel = JLabel("Host: stopped")
-    private val hostManager = OmniRemoteHost()
 
     private val firebaseProjectIdField = JTextField()
     private val firebaseDocPathField = JTextField()
     private val firebaseCredentialsPathField = JTextField()
+    private val firebaseApiKeyField = JTextField()
     
     private val loginEmailField = JTextField()
     private val loginPasswordField = JPasswordField()
@@ -74,6 +80,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
 
     private val client = HttpClient.newBuilder().build()
     private val gson = Gson()
+    private val defaultFirebaseApiKey = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
 
     init {
         loadSettings()
@@ -89,66 +96,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun buildHostPanel(): JPanel {
-        val panel = JPanel(GridBagLayout())
-        val c = GridBagConstraints().apply {
-            fill = GridBagConstraints.HORIZONTAL
-            insets = Insets(4, 8, 4, 8)
-            weightx = 1.0
-        }
-
-        var row = 0
-        addRow(panel, c, row++, "Host Port", hostPortField)
-        addRow(panel, c, row++, "Host Token", hostTokenField)
-
-        val startButton = JButton("Start Host")
-        val stopButton = JButton("Stop Host")
-
-        startButton.addActionListener {
-            val port = hostPortField.text.toIntOrNull() ?: 8765
-            val token = String(hostTokenField.password)
-            hostManager.start(port, token)
-            hostStatusLabel.text = "Host: running on port " + port
-            saveSettings()
-        }
-
-        stopButton.addActionListener {
-            hostManager.stop()
-            hostStatusLabel.text = "Host: stopped"
-        }
-
-        c.gridy = row++
-        c.gridwidth = 1
-        c.gridx = 0
-        panel.add(startButton, c)
-        c.gridx = 1
-        panel.add(stopButton, c)
-
-        c.gridx = 0
-        c.gridy = row++
-        c.gridwidth = 2
-        panel.add(hostStatusLabel, c)
-
-        return panel
-    }
-
-    private fun buildContentTabs(): JTabbedPane {
-        val tabs = JTabbedPane()
-        tabs.addTab("Projects", buildProjectsPanel())
-        tabs.addTab("Terminal", buildTerminalPanel())
-        tabs.addTab("Host Mode", buildHostModePanel())
-        return tabs
-    }
-
-    private fun buildHostModePanel(): JPanel {
         val panel = JPanel(BorderLayout())
-        val hostPortField = JTextField("8766")
-        val hostTokenField = JPasswordField()
-        val startHostButton = JButton("Start Host")
-        val stopHostButton = JButton("Stop Host")
-        val hostLog = JTextArea()
-
-        hostLog.isEditable = false
-        hostLog.font = Font("Consolas", Font.PLAIN, 12)
 
         val configPanel = JPanel(GridBagLayout())
         val c = GridBagConstraints().apply {
@@ -157,31 +105,45 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             weightx = 1.0
         }
 
-        addRow(configPanel, c, 0, "Host Port", hostPortField)
-        addRow(configPanel, c, 1, "Host Token", hostTokenField)
-        addRow(configPanel, c, 2, "Firebase Project ID", firebaseProjectIdField)
-        addRow(configPanel, c, 3, "Firebase Doc Path", firebaseDocPathField)
-        addRow(configPanel, c, 4, "Firebase Credentials Path", firebaseCredentialsPathField)
+        var row = 0
+        addRow(configPanel, c, row++, "Host Port", hostPortField)
+        addRow(configPanel, c, row++, "Host Token", hostTokenField)
+        addRow(configPanel, c, row++, "Firebase Project ID", firebaseProjectIdField)
+        addRow(configPanel, c, row++, "Firebase Doc Path", firebaseDocPathField)
+        addRow(configPanel, c, row++, "Firebase Credentials Path", firebaseCredentialsPathField)
+        addRow(configPanel, c, row++, "Firebase Web API Key", firebaseApiKeyField)
 
-        c.gridy = 5
-        c.gridx = 0
-        configPanel.add(startHostButton, c)
-        c.gridx = 1
-        configPanel.add(stopHostButton, c)
+        val startButton = JButton("Start Host")
+        val stopButton = JButton("Stop Host")
 
-        startHostButton.addActionListener {
+        startButton.addActionListener {
             val port = hostPortField.text.toIntOrNull() ?: 8766
             val token = String(hostTokenField.password)
-            if (token.isNotBlank()) {
-                hostServer.start(port, token)
-            } else {
+            if (token.isBlank()) {
                 logHostMessage("Token cannot be empty.")
+                return@addActionListener
             }
+            saveSettings()
+            hostServer.start(port, token)
+            hostStatusLabel.text = "Host: running on port " + port
         }
 
-        stopHostButton.addActionListener {
+        stopButton.addActionListener {
             hostServer.stop()
+            hostStatusLabel.text = "Host: stopped"
         }
+
+        c.gridy = row++
+        c.gridwidth = 1
+        c.gridx = 0
+        configPanel.add(startButton, c)
+        c.gridx = 1
+        configPanel.add(stopButton, c)
+
+        c.gridx = 0
+        c.gridy = row++
+        c.gridwidth = 2
+        configPanel.add(hostStatusLabel, c)
 
         val loginPanel = JPanel(GridBagLayout())
         loginPanel.border = javax.swing.BorderFactory.createTitledBorder("Firebase Login")
@@ -192,25 +154,30 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         }
         addRow(loginPanel, lc, 0, "Email", loginEmailField)
         addRow(loginPanel, lc, 1, "Password", loginPasswordField)
-        
+
         val loginButton = JButton("Login")
         lc.gridy = 2
         lc.gridx = 0
         lc.gridwidth = 2
         loginPanel.add(loginButton, lc)
-        
+
         lc.gridy = 3
         loginPanel.add(loginStatusLabel, lc)
-        
+
         loginButton.addActionListener {
-            val email = loginEmailField.text
+            val email = loginEmailField.text.trim()
             val password = String(loginPasswordField.password)
-            if (email.isNotBlank() && password.isNotBlank()) {
-                loginStatusLabel.text = "Logging in..."
-                // TODO: Implement Firebase Auth REST API call
-                loginStatusLabel.text = "Logged in as $email"
+            if (email.isBlank() || password.isBlank()) {
+                loginStatusLabel.text = "Email and password required"
+                return@addActionListener
             }
+            loginStatusLabel.text = "Logging in..."
+            runInBackground { performFirebaseLogin(email, password) }
         }
+
+        val hostLog = JTextArea()
+        hostLog.isEditable = false
+        hostLog.font = Font("Consolas", Font.PLAIN, 12)
 
         val northPanel = JPanel(BorderLayout())
         northPanel.add(configPanel, BorderLayout.NORTH)
@@ -219,11 +186,17 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         panel.add(northPanel, BorderLayout.NORTH)
         panel.add(JScrollPane(hostLog), BorderLayout.CENTER)
 
-        // Find the JTextArea in the host panel to log messages
-        val logTextArea = (panel.getComponent(1) as JScrollPane).viewport.view as JTextArea
-        hostServerLog = logTextArea
+        hostServerLog = hostLog
 
         return panel
+    }
+
+    private fun buildContentTabs(): JTabbedPane {
+        val tabs = JTabbedPane()
+        tabs.addTab("Projects", buildProjectsPanel())
+        tabs.addTab("Terminal", buildTerminalPanel())
+        // Removed duplicate Host Mode tab - it's already in buildConfigTabs()
+        return tabs
     }
 
     private fun logHostMessage(message: String) {
@@ -278,7 +251,6 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         refreshButton.addActionListener {
             saveSettings()
             refreshProjects()
-        autoStartHost()
         }
 
         c.gridy = row++
@@ -371,7 +343,6 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             runInBackground {
                 request("POST", "/api/projects/" + encode(entry.name) + "/activate")
                 refreshProjects()
-        autoStartHost()
             }
         }
 
@@ -381,7 +352,6 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             runInBackground {
                 request("POST", "/api/projects/" + encode(entry.name) + "/deactivate")
                 refreshProjects()
-        autoStartHost()
             }
         }
 
@@ -416,11 +386,24 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         tokenField.text = props.getValue("omniremote.token", "")
         secureCheck.isSelected = props.getBoolean("omniremote.secure", false)
 
-        hostPortField.text = props.getValue("omniremote.hostPort", "8765")
+        hostPortField.text = props.getValue("omniremote.hostPort", "8766")
         hostTokenField.text = props.getValue("omniremote.hostToken", "")
         firebaseProjectIdField.text = props.getValue("omniremote.firebaseProjectId", "")
         firebaseDocPathField.text = props.getValue("omniremote.firebaseDocPath", "")
         firebaseCredentialsPathField.text = props.getValue("omniremote.firebaseCredentialsPath", "")
+        firebaseApiKeyField.text = props.getValue("omniremote.firebaseApiKey", defaultFirebaseApiKey)
+
+        val savedEmail = props.getValue("omniremote.firebaseEmail", "")
+        if (savedEmail.isNotBlank()) {
+            loginEmailField.text = savedEmail
+            loginStatusLabel.text = "Saved user: $savedEmail"
+        }
+        if (firebaseDocPathField.text.isBlank()) {
+            val savedUid = props.getValue("omniremote.firebaseUid", "")
+            if (savedUid.isNotBlank()) {
+                firebaseDocPathField.text = "users/$savedUid"
+            }
+        }
     }
 
     private fun saveSettings() {
@@ -434,6 +417,8 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         props.setValue("omniremote.firebaseProjectId", firebaseProjectIdField.text.trim())
         props.setValue("omniremote.firebaseDocPath", firebaseDocPathField.text.trim())
         props.setValue("omniremote.firebaseCredentialsPath", firebaseCredentialsPathField.text.trim())
+        props.setValue("omniremote.firebaseApiKey", firebaseApiKeyField.text.trim())
+        props.setValue("omniremote.firebaseEmail", loginEmailField.text.trim())
     }
 
     private fun buildBaseUrl(): String? {
@@ -635,6 +620,141 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
     private fun showMessage(message: String) {
         SwingUtilities.invokeLater {
             JOptionPane.showMessageDialog(this, message, "Omni Remote", JOptionPane.INFORMATION_MESSAGE)
+        }
+    }
+
+    private fun resolveFirebaseApiKey(): String {
+        val fieldValue = firebaseApiKeyField.text.trim()
+        if (fieldValue.isNotBlank()) {
+            return fieldValue
+        }
+        val envValue = System.getenv("FIREBASE_WEB_API_KEY") ?: ""
+        if (envValue.isNotBlank()) {
+            return envValue
+        }
+        return defaultFirebaseApiKey
+    }
+
+    private fun updateLoginStatus(text: String) {
+        SwingUtilities.invokeLater {
+            loginStatusLabel.text = text
+        }
+    }
+
+    private fun performFirebaseLogin(email: String, password: String) {
+        val apiKey = resolveFirebaseApiKey()
+        if (apiKey.isBlank()) {
+            updateLoginStatus("Firebase API key missing")
+            return
+        }
+        val url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$apiKey"
+        val payload = gson.toJson(mapOf(
+            "email" to email,
+            "password" to password,
+            "returnSecureToken" to true
+        ))
+        val request = HttpRequest.newBuilder(URI.create(url))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(payload))
+            .build()
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) {
+                val data = gson.fromJson(response.body(), Map::class.java)
+                val uid = data["localId"] as? String
+                val owner = email.equals("me@damiennichols.com", ignoreCase = true) ||
+                    email.equals("damien@dmnlat.com", ignoreCase = true)
+                SwingUtilities.invokeLater {
+                    loginStatusLabel.text = if (owner) {
+                        "Logged in as $email (owner)"
+                    } else {
+                        "Logged in as $email"
+                    }
+                    loginPasswordField.text = ""
+                    if (!uid.isNullOrBlank()) {
+                        firebaseDocPathField.text = "users/$uid"
+                        props.setValue("omniremote.firebaseUid", uid)
+                        props.setValue("omniremote.firebaseDocPath", "users/$uid")
+                    }
+                    props.setValue("omniremote.firebaseEmail", email)
+                    saveSettings()
+                }
+                if (!uid.isNullOrBlank()) {
+                    syncLoginRoleToFirestore(uid, email, owner)
+                }
+            } else {
+                val errorMessage = parseFirebaseAuthError(response.body())
+                updateLoginStatus("Login failed: $errorMessage")
+            }
+        } catch (e: Exception) {
+            updateLoginStatus("Login error: ${e.message}")
+        }
+    }
+
+    private fun syncLoginRoleToFirestore(uid: String, email: String, owner: Boolean) {
+        try {
+            if (!ensureFirebaseAdminInitialized()) {
+                logHostMessage("Firestore role sync skipped (Firebase credentials missing).")
+                return
+            }
+            val db = FirestoreClient.getFirestore()
+            val data = mapOf(
+                "email" to email,
+                "role" to if (owner) "owner" else "user",
+                "last_login" to com.google.cloud.Timestamp.now()
+            )
+            db.collection("users").document(uid).set(data, SetOptions.merge()).get()
+            logHostMessage("Firestore role synced for $email.")
+        } catch (e: Exception) {
+            logHostMessage("Firestore role sync failed: ${e.message}")
+        }
+    }
+
+    private fun ensureFirebaseAdminInitialized(): Boolean {
+        if (FirebaseApp.getApps().isNotEmpty()) {
+            return true
+        }
+        return try {
+            val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS")?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: firebaseCredentialsPathField.text.trim().ifBlank {
+                    props.getValue("omniremote.firebaseCredentialsPath", "")
+                }
+            if (credentialsPath.isBlank()) {
+                false
+            } else {
+                val serviceAccount = FileInputStream(credentialsPath)
+                val projectId = System.getenv("FIREBASE_PROJECT_ID")?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: firebaseProjectIdField.text.trim().ifBlank {
+                        props.getValue("omniremote.firebaseProjectId", "")
+                    }
+                val options = FirebaseOptions.builder()
+                    .setCredentials(GoogleCredentials.fromStream(serviceAccount))
+                    .setProjectId(projectId)
+                    .build()
+                FirebaseApp.initializeApp(options)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun parseFirebaseAuthError(body: String): String {
+        return try {
+            val data = gson.fromJson(body, Map::class.java)
+            val error = data["error"] as? Map<*, *>
+            val message = error?.get("message") as? String
+            when (message) {
+                "INVALID_LOGIN_CREDENTIALS" -> "Invalid email or password"
+                "EMAIL_NOT_FOUND" -> "Email not found"
+                "INVALID_PASSWORD" -> "Invalid email or password"
+                "USER_DISABLED" -> "User account disabled"
+                else -> message ?: "Unknown error"
+            }
+        } catch (_: Exception) {
+            "Unknown error"
         }
     }
 

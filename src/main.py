@@ -20,7 +20,7 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.1.0 (Robust Transfer)"
+VERSION = "4.2.0"
 
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
@@ -320,8 +320,11 @@ class SettingsWindow(ctk.CTkToplevel):
                     if k in self.entries: self.entries[k].insert(0, d.get(k,""))
     def save(self):
         with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
-        self.main_app._sync_settings_to_cloud()
-        self.main_app.reload_config(); self.destroy()
+        if hasattr(self.parent, '_sync_settings_to_cloud'):
+            self.parent._sync_settings_to_cloud()
+        if hasattr(self.parent, 'reload_config'):
+            self.parent.reload_config()
+        self.destroy()
 
 class PopupMenu(ctk.CTkToplevel):
     def __init__(self, parent, widget, menu_items):

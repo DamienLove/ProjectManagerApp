@@ -303,63 +303,122 @@ fun OmniRemoteApp() {
             return
         }
         status = "loading cloud config"
-        FirebaseFirestore.getInstance()
-            .collection("users")
-            .document(user.uid)
-            .collection("config")
-            .document("connection")
-            .get()
-            .addOnSuccessListener { doc ->
-                val url = doc.getString("url")
-                if (!url.isNullOrBlank()) {
-                    val uri = Uri.parse(url.trim())
-                    val hostFromUrl = uri.host.orEmpty()
-                    if (hostFromUrl.isNotBlank()) {
-                        host = hostFromUrl
+        val db = FirebaseFirestore.getInstance()
+
+        // Try root document first (new structure).
+        db.collection("users").document(user.uid).get()
+            .addOnSuccessListener { userDoc ->
+                var configFound = false
+
+                val hostFromUser = userDoc.getString("host")
+                val pmPortFromUser = userDoc.get("pmPort") ?: userDoc.get("port")
+                val idePortFromUser = userDoc.get("idePort")
+                val tokenFromUser = userDoc.getString("token")
+                val secureFromUser = userDoc.getBoolean("secure")
+
+                if (!hostFromUser.isNullOrBlank()) {
+                    host = hostFromUser
+                    configFound = true
+                }
+                if (!tokenFromUser.isNullOrBlank()) {
+                    token = tokenFromUser
+                    configFound = true
+                }
+                when (pmPortFromUser) {
+                    is Number -> {
+                        pmPort = pmPortFromUser.toInt().toString()
+                        configFound = true
                     }
-                    if (uri.port != -1) {
-                        pmPort = uri.port.toString()
-                    } else if (uri.scheme.equals("https", ignoreCase = true)) {
-                        pmPort = ""
+                    is String -> if (pmPortFromUser.isNotBlank()) {
+                        pmPort = pmPortFromUser
+                        configFound = true
                     }
-                    secure = uri.scheme.equals("https", ignoreCase = true) ||
-                        uri.scheme.equals("wss", ignoreCase = true)
+                }
+                when (idePortFromUser) {
+                    is Number -> {
+                        idePort = idePortFromUser.toInt().toString()
+                        configFound = true
+                    }
+                    is String -> if (idePortFromUser.isNotBlank()) {
+                        idePort = idePortFromUser
+                        configFound = true
+                    }
+                }
+                if (secureFromUser != null) {
+                    secure = secureFromUser
+                    configFound = true
                 }
 
-                val hostOverride = doc.getString("host")
-                val pmPortOverride = doc.get("pmPort") ?: doc.get("port")
-                val idePortOverride = doc.get("idePort")
-                val secureOverride = doc.getBoolean("secure")
-                val tokenOverride = doc.getString("token")
-                if (!hostOverride.isNullOrBlank()) {
-                    host = hostOverride
-                }
-                if (!tokenOverride.isNullOrBlank()) {
-                    token = tokenOverride
-                }
-                when (pmPortOverride) {
-                    is Number -> pmPort = pmPortOverride.toInt().toString()
-                    is String -> if (pmPortOverride.isNotBlank()) {
-                        pmPort = pmPortOverride
+                if (configFound && host.isNotBlank() && token.isNotBlank()) {
+                    val role = userDoc.getString("role")
+                    status = if (role == "owner" || role == "admin") {
+                        "config loaded (admin)"
+                    } else {
+                        "config loaded"
                     }
-                }
-                when (idePortOverride) {
-                    is Number -> idePort = idePortOverride.toInt().toString()
-                    is String -> if (idePortOverride.isNotBlank()) {
-                        idePort = idePortOverride
-                    }
-                }
-                if (secureOverride != null) {
-                    secure = secureOverride
-                }
-                status = "cloud config loaded"
-                if (host.isNotBlank() && token.isNotBlank()) {
                     connectWebSocket()
                     refreshProjectsAsync()
+                    return@addOnSuccessListener
                 }
+
+                // Fall back to subcollection (backward compatibility).
+                db.collection("users").document(user.uid)
+                    .collection("config").document("connection").get()
+                    .addOnSuccessListener { doc ->
+                        val url = doc.getString("url")
+                        if (!url.isNullOrBlank()) {
+                            val uri = Uri.parse(url.trim())
+                            val hostFromUrl = uri.host.orEmpty()
+                            if (hostFromUrl.isNotBlank()) {
+                                host = hostFromUrl
+                            }
+                            if (uri.port != -1) {
+                                pmPort = uri.port.toString()
+                            } else if (uri.scheme.equals("https", ignoreCase = true)) {
+                                pmPort = ""
+                            }
+                            secure = uri.scheme.equals("https", ignoreCase = true) ||
+                                uri.scheme.equals("wss", ignoreCase = true)
+                        }
+
+                        val hostOverride = doc.getString("host")
+                        val pmPortOverride = doc.get("pmPort") ?: doc.get("port")
+                        val idePortOverride = doc.get("idePort")
+                        val secureOverride = doc.getBoolean("secure")
+                        val tokenOverride = doc.getString("token")
+                        if (!hostOverride.isNullOrBlank()) {
+                            host = hostOverride
+                        }
+                        if (!tokenOverride.isNullOrBlank()) {
+                            token = tokenOverride
+                        }
+                        when (pmPortOverride) {
+                            is Number -> pmPort = pmPortOverride.toInt().toString()
+                            is String -> if (pmPortOverride.isNotBlank()) {
+                                pmPort = pmPortOverride
+                            }
+                        }
+                        when (idePortOverride) {
+                            is Number -> idePort = idePortOverride.toInt().toString()
+                            is String -> if (idePortOverride.isNotBlank()) {
+                                idePort = idePortOverride
+                            }
+                        }
+                        if (secureOverride != null) {
+                            secure = secureOverride
+                        }
+                        status = "config loaded (legacy)"
+                        if (host.isNotBlank() && token.isNotBlank()) {
+                            connectWebSocket()
+                            refreshProjectsAsync()
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        status = "config error: ${e.message}"
+                    }
             }
             .addOnFailureListener { e ->
-                status = "cloud config error: ${e.message}"
+                status = "config error: ${e.message}"
             }
     }
 

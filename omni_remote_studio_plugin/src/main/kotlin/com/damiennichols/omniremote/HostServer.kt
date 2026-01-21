@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import com.google.cloud.firestore.SetOptions
 import com.google.firebase.cloud.FirestoreClient
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
@@ -21,44 +22,18 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     private var server: Javalin? = null
     private val objectMapper = ObjectMapper()
 
-    init {
-        try {
-            if (FirebaseApp.getApps().isEmpty()) {
-                val props = PropertiesComponent.getInstance()
-                val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS") 
-                    ?: props.getValue("omniremote.firebaseCredentialsPath")
-                
-                if (credentialsPath != null && credentialsPath.isNotBlank()) {
-                    val serviceAccount = FileInputStream(credentialsPath)
-                    val projectId = System.getenv("FIREBASE_PROJECT_ID") 
-                        ?: props.getValue("omniremote.firebaseProjectId")
-                        
-                    val options = FirebaseOptions.builder()
-                        .setCredentials(GoogleCredentials.fromStream(serviceAccount))
-                        .setProjectId(projectId)
-                        .build()
-                    FirebaseApp.initializeApp(options)
-                    onLog("Firebase initialized with project: $projectId")
-                } else {
-                    onLog("Firebase not initialized (Credentials path not set in environment or settings).")
-                }
-            }
-        } catch (e: Exception) {
-            onLog("Firebase initialization failed: ${e.message}")
-        }
-    }
-
     fun start(port: Int, token: String) {
         if (server != null) {
             onLog("Server is already running.")
             return
         }
 
+        ensureFirebaseInitialized()
         syncToFirestore(port, token)
 
         server = Javalin.create().apply {
             before { ctx ->
-                val requestToken = ctx.header("X-Omni-Token")
+                val requestToken = ctx.header("X-Omni-Token") ?: ctx.queryParam("token")
                 if (requestToken != token) {
                     ctx.status(401).result("Unauthorized")
                 }
@@ -77,28 +52,71 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
             ws("/ws/terminal") { ws ->
                 ws.onConnect { ctx ->
+                    val requestToken = ctx.header("X-Omni-Token") ?: ctx.queryParam("token")
+                    if (requestToken != token) {
+                        ctx.closeSession(1008, "Unauthorized")
+                        return@onConnect
+                    }
                     onLog("Terminal connected")
                 }
 
                 ws.onMessage { ctx ->
-                    val command = ctx.message()
-                    onLog("Terminal command: $command")
+                    val message = ctx.message()
+                    onLog("Terminal message: $message")
                     try {
-                        val process = ProcessBuilder(parseCommand(command))
-                            .directory(project.basePath?.let { java.io.File(it) })
-                            .redirectErrorStream(true)
-                            .start()
+                        val data = objectMapper.readValue(message, Map::class.java)
+                        val type = data["type"] as? String
 
-                        BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                            var line: String?
-                            while (reader.readLine().also { line = it } != null) {
-                                ctx.send(line!!)
+                        when (type) {
+                            "run" -> {
+                                val cmd = data["cmd"] as? String ?: return@onMessage
+                                val cwd = data["cwd"] as? String
+                                onLog("Terminal command: $cmd")
+
+                                val process = ProcessBuilder(parseCommand(cmd))
+                                    .directory(cwd?.let { java.io.File(it) } ?: project.basePath?.let { java.io.File(it) })
+                                    .redirectErrorStream(true)
+                                    .start()
+
+                                ctx.send(objectMapper.writeValueAsString(mapOf(
+                                    "type" to "started",
+                                    "sessionId" to java.util.UUID.randomUUID().toString()
+                                )))
+
+                                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                                    var line: String?
+                                    while (reader.readLine().also { line = it } != null) {
+                                        ctx.send(objectMapper.writeValueAsString(mapOf(
+                                            "type" to "output",
+                                            "data" to line
+                                        )))
+                                    }
+                                }
+
+                                val exitCode = process.waitFor()
+                                ctx.send(objectMapper.writeValueAsString(mapOf(
+                                    "type" to "exit",
+                                    "code" to exitCode.toString()
+                                )))
+                            }
+                            "stdin" -> {
+                                onLog("stdin not yet implemented")
+                            }
+                            "cancel" -> {
+                                onLog("cancel not yet implemented")
+                            }
+                            else -> {
+                                ctx.send(objectMapper.writeValueAsString(mapOf(
+                                    "type" to "error",
+                                    "message" to "Unknown message type: $type"
+                                )))
                             }
                         }
-                        val exitCode = process.waitFor()
-                        ctx.send("Process exited with code $exitCode")
                     } catch (e: Exception) {
-                        ctx.send("Error executing command: ${e.message}")
+                        ctx.send(objectMapper.writeValueAsString(mapOf(
+                            "type" to "error",
+                            "message" to (e.message ?: "Unknown error")
+                        )))
                     }
                 }
 
@@ -119,6 +137,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
     private fun syncToFirestore(port: Int, token: String) {
         try {
+            ensureFirebaseInitialized()
             val db = FirestoreClient.getFirestore()
             val props = PropertiesComponent.getInstance()
             val docPath = System.getenv("FIREBASE_DOCUMENT_PATH") 
@@ -127,21 +146,51 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             if (docPath != null && docPath.contains('/')) {
                 val parts = docPath.split('/')
                 val collection = parts[0]
-                val doc = parts[1]
+                val userDocId = parts[1]
                 val data = mapOf(
                     "host" to (System.getenv("REMOTE_SYNC_HOST") ?: "127.0.0.1"),
-                    "port" to port,
+                    "pmPort" to port,
+                    "idePort" to port,
                     "token" to token,
                     "updated_at" to com.google.cloud.Timestamp.now(),
                     "agent" to "intellij-plugin"
                 )
-                db.collection(collection).document(doc).set(data).get()
-                onLog("Synced connection info to Firestore.")
+                // Write to root level (primary location for Android app)
+                db.collection(collection).document(userDocId).set(data, SetOptions.merge()).get()
+                // Also write to subcollection for backward compatibility  
+                db.collection(collection).document(userDocId).collection("config").document("connection").set(data).get()
+                onLog("Synced connection info to Firestore (root + subcollection).")
             } else {
-                onLog("FIREBASE_DOCUMENT_PATH not set. Skipping Firestore sync.")
+                onLog("FIREBASE_DOCUMENT_PATH not set (format: users/{uid}). Skipping Firestore sync.")
             }
         } catch (e: Exception) {
             onLog("Firestore sync failed: ${e.message}")
+        }
+    }
+
+    private fun ensureFirebaseInitialized() {
+        if (FirebaseApp.getApps().isNotEmpty()) {
+            return
+        }
+        try {
+            val props = PropertiesComponent.getInstance()
+            val credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                ?: props.getValue("omniremote.firebaseCredentialsPath")
+            if (credentialsPath != null && credentialsPath.isNotBlank()) {
+                val serviceAccount = FileInputStream(credentialsPath)
+                val projectId = System.getenv("FIREBASE_PROJECT_ID")
+                    ?: props.getValue("omniremote.firebaseProjectId")
+                val options = FirebaseOptions.builder()
+                    .setCredentials(GoogleCredentials.fromStream(serviceAccount))
+                    .setProjectId(projectId)
+                    .build()
+                FirebaseApp.initializeApp(options)
+                onLog("Firebase initialized with project: $projectId")
+            } else {
+                onLog("Firebase not initialized (Credentials path not set in environment or settings).")
+            }
+        } catch (e: Exception) {
+            onLog("Firebase initialization failed: ${e.message}")
         }
     }
 
