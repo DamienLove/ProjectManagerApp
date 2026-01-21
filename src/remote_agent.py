@@ -200,13 +200,13 @@ def require_token_from_request(request: Request) -> None:
         auth = request.headers.get("Authorization", "")
         if auth.lower().startswith("bearer "):
             token = auth.split(" ", 1)[1].strip()
-    if token != REMOTE_ACCESS_TOKEN:
+    if not token or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def require_token_from_ws(ws: WebSocket) -> None:
     token = ws.headers.get("X-Omni-Token") or ws.query_params.get("token")
-    if token != REMOTE_ACCESS_TOKEN:
+    if not token or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -351,7 +351,7 @@ def check_install_software(project_path: str) -> None:
                 log(f"Auto-install software: {app_id}")
                 subprocess.run([
                     "winget", "install", "-e", "--id", app_id, "--silent"
-                ], shell=True)
+                ])
         except Exception:
             pass
 
@@ -378,7 +378,7 @@ def open_studio_project(name: str) -> Dict[str, str]:
     if not studio:
         return {"status": "error", "message": "Android Studio not found"}
     try:
-        subprocess.Popen([studio, project_path], shell=True)
+        subprocess.Popen([studio, project_path])
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": "Studio launched"}

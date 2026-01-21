@@ -1,0 +1,4 @@
+## 2024-05-24 - [CRITICAL] Timing Attack Vulnerability in Token Verification
+**Vulnerability:** The authentication token in `remote_agent.py` was being verified using the `!=` operator, which is susceptible to timing attacks. An attacker could potentially infer the token byte-by-byte by measuring the time it takes for the comparison to fail.
+**Learning:** Standard string comparison stops as soon as a mismatch is found, leaking information about how much of the string matched. This is a classic side-channel attack vector in authentication systems.
+**Prevention:** Always use `secrets.compare_digest()` for comparing secrets (passwords, tokens, API keys). It runs in constant time regardless of the input, preventing timing analysis. I also removed `shell=True` from `subprocess` calls where it was unnecessary to reduce the attack surface for command injection, although the primary fix was the timing attack.
