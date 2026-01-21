@@ -84,7 +84,7 @@ class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Login")
-        self.geometry("300x200")
+        self.geometry("350x350")
         bring_to_front(self, parent)
         self.parent = parent
         self.protocol("WM_DELETE_WINDOW", self.parent.quit)
@@ -92,15 +92,23 @@ class LoginWindow(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="Email").pack(pady=(10,0))
         self.email_entry = ctk.CTkEntry(self, placeholder_text="Enter your email")
         self.email_entry.pack(fill="x", padx=20)
+        email_saved = os.getenv("FIREBASE_EMAIL", "")
+        if email_saved: self.email_entry.insert(0, email_saved)
 
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
-        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")        
+        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
         self.password_entry.pack(fill="x", padx=20)
 
-        ctk.CTkButton(self, text="Login", command=self.login).pack(pady=20)
+        self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
+        self.status_lbl.pack(pady=(5,0))
 
-    
-    
+        btn_row1 = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row1.pack(pady=(10,0))
+        ctk.CTkButton(btn_row1, text="Login", width=100, command=self.login).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row1, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        
+        ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
+
     def register(self):
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
@@ -142,6 +150,7 @@ class LoginWindow(ctk.CTkToplevel):
         except Exception as e:
             self.status_lbl.configure(text="Connection failed", text_color="red")
 
+    
     def login(self):
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
@@ -152,7 +161,7 @@ class LoginWindow(ctk.CTkToplevel):
         api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
         try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
             data = resp.json()
             if resp.status_code == 200:
                 uid = data["localId"]
@@ -183,8 +192,12 @@ class LoginWindow(ctk.CTkToplevel):
                     self.status_lbl.configure(text="Invalid email or password", text_color="red")
                 else:
                     self.status_lbl.configure(text=f"Error: {err}", text_color="red")
+        except requests.exceptions.RequestException as e:
+            self.status_lbl.configure(text=f"Network error: {str(e)[:40]}", text_color="red")
+            print(f"Request failed: {e}")
         except Exception as e:
-            self.status_lbl.configure(text="Connection error", text_color="red")
+            self.status_lbl.configure(text=f"System error: {str(e)[:40]}", text_color="red")
+            print(f"Login class error: {e}")
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
