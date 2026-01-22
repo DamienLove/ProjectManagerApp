@@ -121,15 +121,32 @@ def sync_to_firestore():
         # 1. Sync connection info
         # Use REMOTE_PUBLIC_HOST if set (tunnel URL or LAN IP), otherwise fall back to bind host
         public_host = REMOTE_PUBLIC_HOST or (REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "")
-        if not public_host:
-            print("[remote-agent] Warning: REMOTE_PUBLIC_HOST not set. Android won't be able to auto-connect.")
-            print("[remote-agent] Set REMOTE_PUBLIC_HOST to your Cloudflare tunnel URL or LAN IP in secrets.env")
+
+        # Validate host - warn if it looks like localhost or won't work remotely
+        is_localhost = public_host in ("127.0.0.1", "localhost", "0.0.0.0", "")
+        is_private_ip = public_host.startswith(("192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
+
+        if is_localhost:
+            print("[remote-agent] ERROR: REMOTE_PUBLIC_HOST is localhost - Android cannot connect!")
+            print("[remote-agent] Set REMOTE_PUBLIC_HOST to your Cloudflare tunnel URL in secrets.env")
+            print("[remote-agent] Skipping Firestore sync to prevent bad config from being saved.")
+            return
+
+        if is_private_ip:
+            print(f"[remote-agent] Warning: REMOTE_PUBLIC_HOST is a private IP ({public_host})")
+            print("[remote-agent] This only works if Android is on the same network.")
+            print("[remote-agent] For remote access, use a Cloudflare tunnel URL instead.")
+
+        # Auto-detect secure: true for tunnel URLs (they use HTTPS), false for IPs
+        is_likely_tunnel = public_host and not public_host[0].isdigit() and "." in public_host
+        use_secure = is_likely_tunnel or REMOTE_PUBLIC_HOST.startswith("https://")
+
         conn_data = {
             "host": public_host,
             "pmPort": REMOTE_PORT,
             "idePort": REMOTE_PORT,
             "token": REMOTE_ACCESS_TOKEN,
-            "secure": REMOTE_PUBLIC_HOST.startswith("https://") if REMOTE_PUBLIC_HOST else False,
+            "secure": use_secure,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "agent": "python-agent",
             "version": VERSION

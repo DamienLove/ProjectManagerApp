@@ -381,7 +381,8 @@ class SettingsWindow(ctk.CTkToplevel):
         f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
         ctk.CTkLabel(f, text="Public Host (Android)", width=200, anchor="w").pack(side="left")
         e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PUBLIC_HOST"]=e
-        ctk.CTkButton(f, text="LAN IP", width=70, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(5,0))
+        ctk.CTkButton(f, text="Tunnel", width=70, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(5,0))
+        ctk.CTkButton(f, text="LAN", width=50, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(5,0))
 
         # Bind host
         f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
@@ -396,8 +397,9 @@ class SettingsWindow(ctk.CTkToplevel):
         e.insert(0, "8765")  # Default
 
         # Help text
-        help_text = "Set Public Host to your Cloudflare tunnel URL or LAN IP.\nAndroid will auto-connect using this address."
-        ctk.CTkLabel(self.scroll, text=help_text, text_color="gray", font=("", 11)).pack(anchor="w", pady=(5,10))
+        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.
+LAN IP only works on same network. 127.0.0.1 will NOT work!"
+        ctk.CTkLabel(self.scroll, text=help_text, text_color="#f97316", font=("", 11)).pack(anchor="w", pady=(5,10))
 
         # Restart agent checkbox
         self.restart_agent_var = ctk.BooleanVar(value=True)
@@ -427,6 +429,38 @@ class SettingsWindow(ctk.CTkToplevel):
                 entry.insert(0, ip)
         except Exception:
             pass
+
+    def _detect_tunnel_url(self):
+        """Try to detect Cloudflare tunnel URL from config file."""
+        import yaml
+        config_paths = [
+            os.path.expanduser("~/.cloudflared/config.yml"),
+            os.path.expanduser("~/.cloudflared/config.yaml"),
+        ]
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    ingress = config.get("ingress", [])
+                    for rule in ingress:
+                        hostname = rule.get("hostname", "")
+                        if hostname and not hostname.startswith("*"):
+                            entry = self.entries.get("REMOTE_PUBLIC_HOST")
+                            if entry:
+                                entry.delete(0, "end")
+                                entry.insert(0, hostname)
+                            return
+                except Exception:
+                    continue
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "Cloudflare Tunnel",
+            "No tunnel config found.
+
+"
+            "Paste your tunnel URL directly (e.g., omni.yourdomain.com)"
+        )
 
     def load(self):
         if os.path.exists(self.env):
