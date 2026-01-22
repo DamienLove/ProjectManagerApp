@@ -142,8 +142,15 @@ class LoginWindow(ctk.CTkToplevel):
         if email_saved: self.email_entry.insert(0, email_saved)
 
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
-        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
-        self.password_entry.pack(fill="x", padx=20)
+
+        self.pwd_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.pwd_frame.pack(fill="x", padx=20)
+
+        self.password_entry = ctk.CTkEntry(self.pwd_frame, placeholder_text="Enter your password", show="*")
+        self.password_entry.pack(side="left", fill="x", expand=True)
+
+        self.btn_show = ctk.CTkButton(self.pwd_frame, text="👁️", width=30, fg_color="transparent", text_color="gray", hover_color=None, command=self.toggle_password)
+        self.btn_show.pack(side="right", padx=(5,0))
 
         self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
         self.status_lbl.pack(pady=(5,0))
@@ -154,6 +161,14 @@ class LoginWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
+
+    def toggle_password(self):
+        if self.password_entry.cget("show") == "*":
+            self.password_entry.configure(show="")
+            self.btn_show.configure(text="🔒")
+        else:
+            self.password_entry.configure(show="*")
+            self.btn_show.configure(text="👁️")
 
     def register(self):
         email = self.email_entry.get().strip()
@@ -375,6 +390,8 @@ class SettingsWindow(ctk.CTkToplevel):
         f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
         ctk.CTkLabel(f, text="Remote Access Token", width=200, anchor="w").pack(side="left")
         e=ctk.CTkEntry(f, show="*"); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_ACCESS_TOKEN"]=e
+        self.btn_show_token = ctk.CTkButton(f, text="👁️", width=30, fg_color="transparent", text_color="gray", command=self._toggle_token)
+        self.btn_show_token.pack(side="left", padx=(5,0))
         ctk.CTkButton(f, text="Generate", width=80, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(5,0))
 
         # Public host field with auto-detect buttons
@@ -397,8 +414,7 @@ class SettingsWindow(ctk.CTkToplevel):
         e.insert(0, "8765")  # Default
 
         # Help text
-        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.
-LAN IP only works on same network. 127.0.0.1 will NOT work!"
+        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.\nLAN IP only works on same network. 127.0.0.1 will NOT work!"
         ctk.CTkLabel(self.scroll, text=help_text, text_color="#f97316", font=("", 11)).pack(anchor="w", pady=(5,10))
 
         # Restart agent checkbox
@@ -407,6 +423,15 @@ LAN IP only works on same network. 127.0.0.1 will NOT work!"
 
         ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=40).pack(fill="x", padx=20, pady=20)
         self.load()
+
+    def _toggle_token(self):
+        e = self.entries["REMOTE_ACCESS_TOKEN"]
+        if e.cget("show") == "*":
+            e.configure(show="")
+            self.btn_show_token.configure(text="🔒")
+        else:
+            e.configure(show="*")
+            self.btn_show_token.configure(text="👁️")
 
     def _generate_token(self):
         import secrets as sec
@@ -456,9 +481,7 @@ LAN IP only works on same network. 127.0.0.1 will NOT work!"
         from tkinter import messagebox
         messagebox.showinfo(
             "Cloudflare Tunnel",
-            "No tunnel config found.
-
-"
+            "No tunnel config found.\n\n"
             "Paste your tunnel URL directly (e.g., omni.yourdomain.com)"
         )
 
