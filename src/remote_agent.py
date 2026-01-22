@@ -20,7 +20,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.3.0"
+VERSION = "4.4.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -44,6 +44,7 @@ LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 load_dotenv(ENV_PATH)
 
 REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "127.0.0.1")
+REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # External host for Android (tunnel URL or LAN IP)
 REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
 REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
@@ -118,11 +119,17 @@ def sync_to_firestore():
         return
     try:
         # 1. Sync connection info
+        # Use REMOTE_PUBLIC_HOST if set (tunnel URL or LAN IP), otherwise fall back to bind host
+        public_host = REMOTE_PUBLIC_HOST or (REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "")
+        if not public_host:
+            print("[remote-agent] Warning: REMOTE_PUBLIC_HOST not set. Android won't be able to auto-connect.")
+            print("[remote-agent] Set REMOTE_PUBLIC_HOST to your Cloudflare tunnel URL or LAN IP in secrets.env")
         conn_data = {
-            "host": REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "127.0.0.1",
+            "host": public_host,
             "pmPort": REMOTE_PORT,
             "idePort": REMOTE_PORT,
             "token": REMOTE_ACCESS_TOKEN,
+            "secure": REMOTE_PUBLIC_HOST.startswith("https://") if REMOTE_PUBLIC_HOST else False,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "agent": "python-agent",
             "version": VERSION

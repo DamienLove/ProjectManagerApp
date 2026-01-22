@@ -20,7 +20,7 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.3.0"
+VERSION = "4.4.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
@@ -52,6 +52,9 @@ PORTABLE_AUTO_CLEAN_ENV = "PORTABLE_AUTO_CLEANUP"
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+
+# Hidden projects list (loaded from env, used by sync_to_firestore)
+HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
 
 # --- UTILS ---
 def force_remove_readonly(func, path, excinfo):
@@ -341,34 +344,109 @@ class ProjectConfigWindow(ctk.CTkToplevel):
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, env):
-        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x650"); self.entries={}
+        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x750"); self.entries={}
         self.fields = [
-            ("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"), 
-            ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"), 
-            ("GitHub Token","GITHUB_TOKEN"), 
+            ("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"),
+            ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"),
+            ("GitHub Token","GITHUB_TOKEN"),
             ("Hidden Projects","HIDDEN_PROJECTS"),
             ("Firebase Project ID", "FIREBASE_PROJECT_ID"),
             ("Firebase Doc Path", "FIREBASE_DOCUMENT_PATH"),
             ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS")
         ]
+        self.remote_fields = [
+            ("Remote Access Token", "REMOTE_ACCESS_TOKEN"),
+            ("Public Host (for Android)", "REMOTE_PUBLIC_HOST"),
+            ("Bind Host", "REMOTE_BIND_HOST"),
+            ("Remote Port", "REMOTE_PORT"),
+        ]
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # General settings section
+        ctk.CTkLabel(self.scroll, text="General Settings", font=("", 14, "bold")).pack(anchor="w", pady=(0,5))
         for l,k in self.fields:
             f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5); ctk.CTkLabel(f, text=l, width=200, anchor="w").pack(side="left")
             e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
+
+        # Remote Agent section
+        ctk.CTkLabel(self.scroll, text="Remote Agent (Android)", font=("", 14, "bold")).pack(anchor="w", pady=(20,5))
+
+        # Token field with generate button
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Remote Access Token", width=200, anchor="w").pack(side="left")
+        e=ctk.CTkEntry(f, show="*"); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_ACCESS_TOKEN"]=e
+        ctk.CTkButton(f, text="Generate", width=80, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(5,0))
+
+        # Public host field with auto-detect buttons
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Public Host (Android)", width=200, anchor="w").pack(side="left")
+        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PUBLIC_HOST"]=e
+        ctk.CTkButton(f, text="LAN IP", width=70, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(5,0))
+
+        # Bind host
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Bind Host", width=200, anchor="w").pack(side="left")
+        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_BIND_HOST"]=e
+        e.insert(0, "127.0.0.1")  # Default
+
+        # Port
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Remote Port", width=200, anchor="w").pack(side="left")
+        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PORT"]=e
+        e.insert(0, "8765")  # Default
+
+        # Help text
+        help_text = "Set Public Host to your Cloudflare tunnel URL or LAN IP.\nAndroid will auto-connect using this address."
+        ctk.CTkLabel(self.scroll, text=help_text, text_color="gray", font=("", 11)).pack(anchor="w", pady=(5,10))
+
+        # Restart agent checkbox
+        self.restart_agent_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self.scroll, text="Restart remote agent after save", variable=self.restart_agent_var).pack(anchor="w", pady=5)
+
         ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=40).pack(fill="x", padx=20, pady=20)
         self.load()
+
+    def _generate_token(self):
+        import secrets as sec
+        token = sec.token_urlsafe(32)
+        entry = self.entries.get("REMOTE_ACCESS_TOKEN")
+        if entry:
+            entry.delete(0, "end")
+            entry.insert(0, token)
+
+    def _detect_lan_ip(self):
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            entry = self.entries.get("REMOTE_PUBLIC_HOST")
+            if entry:
+                entry.delete(0, "end")
+                entry.insert(0, ip)
+        except Exception:
+            pass
+
     def load(self):
         if os.path.exists(self.env):
             with open(self.env) as f:
                 d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in f if "=" in l and not l.startswith("#")}
-                for l,k in self.fields: 
-                    if k in self.entries: self.entries[k].insert(0, d.get(k,""))
+                all_fields = self.fields + self.remote_fields
+                for l,k in all_fields:
+                    if k in self.entries:
+                        self.entries[k].delete(0, "end")
+                        self.entries[k].insert(0, d.get(k,""))
+
     def save(self):
         with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
+        load_dotenv(self.env, override=True)
         if hasattr(self.parent, '_sync_settings_to_cloud'):
             self.parent._sync_settings_to_cloud()
         if hasattr(self.parent, 'reload_config'):
             self.parent.reload_config()
+        if self.restart_agent_var.get() and hasattr(self.parent, '_restart_remote_agent'):
+            self.parent._restart_remote_agent()
         self.destroy()
 
 class PopupMenu(ctk.CTkToplevel):
@@ -1295,6 +1373,21 @@ class ProjectManagerApp(ctk.CTk):
             else:
                 self.log(f"   > Skipping uninstall for {app} (in use by another project).")
 
+
+    def _restart_remote_agent(self):
+        """Stop the current agent and start a new one with updated config."""
+        self.log("🔄 Restarting Remote Agent...")
+        if self.agent_process:
+            try:
+                self.agent_process.terminate()
+                self.agent_process.wait(timeout=5)
+            except Exception:
+                try:
+                    self.agent_process.kill()
+                except Exception:
+                    pass
+            self.agent_process = None
+        self._start_remote_agent()
 
     def _start_remote_agent(self):
         agent_script = os.path.join(BASE_DIR, "src", "remote_agent.py")
