@@ -59,6 +59,11 @@ LOCAL_WORKSPACE_ROOT = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
 DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]   
 
+# Performance Optimization: Pre-calculate absolute paths
+ABS_LOCAL_WORKSPACE_ROOT = os.path.abspath(LOCAL_WORKSPACE_ROOT)
+ABS_REMOTE_ALLOWED_ROOTS = [os.path.abspath(p) for p in REMOTE_ALLOWED_ROOTS]
+ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
+
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
 
@@ -453,19 +458,16 @@ def is_path_safe(path: str) -> bool:
         return False
     abs_path = os.path.abspath(path)
     # Always allow the workspace root and its children.
-    ws_root = os.path.abspath(LOCAL_WORKSPACE_ROOT)
-    if abs_path == ws_root or abs_path.startswith(ws_root + os.sep):
+    if abs_path == ABS_LOCAL_WORKSPACE_ROOT or abs_path.startswith(ABS_LOCAL_WORKSPACE_ROOT + os.sep):
         return True
     # If allowed roots are defined, enforce them.
-    if REMOTE_ALLOWED_ROOTS:
-        for root in REMOTE_ALLOWED_ROOTS:
-            root_abs = os.path.abspath(root)
+    if ABS_REMOTE_ALLOWED_ROOTS:
+        for root_abs in ABS_REMOTE_ALLOWED_ROOTS:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
         return False
     # Otherwise block only obviously dangerous roots.
-    for p in PROTECTED_PATHS:
-        p_abs = os.path.abspath(p)
+    for p_abs in ABS_PROTECTED_PATHS:
         if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
             return False
     return True
