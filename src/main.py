@@ -1118,7 +1118,7 @@ class ProjectManagerApp(ctk.CTk):
         
         drive_root = self._drive_root()
         hidden = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
-        hidden.extend(["projectmanagerapp", "$recycle.bin", CLOUD_META_DIRNAME.lower()])
+        hidden.extend(["$recycle.bin", CLOUD_META_DIRNAME.lower()])
 
         # 1. Scan Local
         local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}

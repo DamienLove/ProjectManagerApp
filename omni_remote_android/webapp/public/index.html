@@ -349,6 +349,7 @@
         <div id="main-view" class="hidden">
             <div class="status-bar">
                 <span class="user-email" id="user-email"></span>
+                <span id="agent-status" class="status-text warning hidden">● Checking Status...</span>
                 <button class="btn btn-warning" id="sign-out-btn" style="padding: 8px 16px; font-size: 12px;">Sign Out</button>
             </div>
 
@@ -358,6 +359,11 @@
             <div class="card">
                 <h2 class="card-title">Connection Settings</h2>
                 <p class="info-text">Configure your OmniRemote Agent connection. These settings will sync to your Android app automatically.</p>
+
+                <div id="tunnel-info" class="success-message hidden" style="word-break: break-all;">
+                    <strong>✨ Auto-Tunnel Active</strong><br>
+                    <span id="tunnel-url" style="font-size: 12px; opacity: 0.9;"></span>
+                </div>
 
                 <div class="form-group">
                     <label for="host">Host Address</label>
@@ -414,7 +420,7 @@
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-        import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
         // Firebase configuration
         const firebaseConfig = {
@@ -444,7 +450,11 @@
         const signInBtn = document.getElementById('sign-in-btn');
 
         const userEmailSpan = document.getElementById('user-email');
+        const agentStatusSpan = document.getElementById('agent-status');
         const signOutBtn = document.getElementById('sign-out-btn');
+
+        const tunnelInfo = document.getElementById('tunnel-info');
+        const tunnelUrlSpan = document.getElementById('tunnel-url');
 
         const hostInput = document.getElementById('host');
         const pmPortInput = document.getElementById('pm-port');
@@ -487,30 +497,70 @@
                 userEmailSpan.textContent = user.email;
 
                 // Load existing config
-                await loadConfig(user.uid);
+                subscribeToConfig(user.uid);
             } else {
                 loginView.classList.remove('hidden');
                 mainView.classList.add('hidden');
+                if (unsubscribeConfig) unsubscribeConfig();
             }
         });
 
-        // Load config from Firestore
-        async function loadConfig(uid) {
-            try {
-                const docRef = doc(db, 'users', uid);
-                const docSnap = await getDoc(docRef);
+        let unsubscribeConfig = null;
 
+        // Subscribe to config from Firestore
+        function subscribeToConfig(uid) {
+            if (unsubscribeConfig) unsubscribeConfig();
+
+            const docRef = doc(db, 'users', uid);
+            
+            unsubscribeConfig = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    if (data.host) hostInput.value = data.host;
-                    if (data.pmPort) pmPortInput.value = data.pmPort;
-                    if (data.idePort) idePortInput.value = data.idePort;
-                    if (data.token) tokenInput.value = data.token;
+                    
+                    // Update form fields if not focused
+                    if (document.activeElement !== hostInput && data.host) hostInput.value = data.host;
+                    if (document.activeElement !== pmPortInput && data.pmPort) pmPortInput.value = data.pmPort;
+                    if (document.activeElement !== idePortInput && data.idePort) idePortInput.value = data.idePort;
+                    if (document.activeElement !== tokenInput && data.token) tokenInput.value = data.token;
+                    
                     if (data.secure) secureToggle.classList.add('active');
+                    else secureToggle.classList.remove('active');
+
+                    // Update Status
+                    agentStatusSpan.classList.remove('hidden');
+                    if (data.online) {
+                        agentStatusSpan.textContent = '● Agent Online';
+                        agentStatusSpan.className = 'status-text success';
+                    } else {
+                        agentStatusSpan.textContent = '● Agent Offline';
+                        agentStatusSpan.className = 'status-text error';
+                    }
+
+                    // Update Tunnel Info
+                    if (data.tunnelUrl) {
+                        tunnelInfo.classList.remove('hidden');
+                        tunnelUrlSpan.textContent = data.tunnelUrl;
+                        hostInput.disabled = true;
+                        pmPortInput.disabled = true;
+                        idePortInput.disabled = true;
+                        secureToggle.classList.add('active');
+                        // Make inputs look disabled
+                        hostInput.style.opacity = '0.7';
+                        pmPortInput.style.opacity = '0.7';
+                        idePortInput.style.opacity = '0.7';
+                    } else {
+                        tunnelInfo.classList.add('hidden');
+                        hostInput.disabled = false;
+                        pmPortInput.disabled = false;
+                        idePortInput.disabled = false;
+                        hostInput.style.opacity = '1';
+                        pmPortInput.style.opacity = '1';
+                        idePortInput.style.opacity = '1';
+                    }
                 }
-            } catch (error) {
-                console.error('Error loading config:', error);
-            }
+            }, (error) => {
+                console.error('Error listening to config:', error);
+            });
         }
 
         // Sign in

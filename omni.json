@@ -1,0 +1,13 @@
+{
+    "external_paths": [],
+    "software": [
+        "GitHub.cli",
+        "ARP\\Machine\\X64\\Git_is1",
+        "Python.Launcher",
+        "OpenJS.NodeJS",
+        "Python.Python.3.12",
+        "Google.CloudSDK",
+        "Google.AndroidStudio",
+        "ARP\\Machine\\X64\\Android Studio"
+    ]
+}

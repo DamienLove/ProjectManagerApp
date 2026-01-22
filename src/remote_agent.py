@@ -3,14 +3,18 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import threading
+import time
 import uuid
 import sys
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -20,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.4.0"
+VERSION = "4.5.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -43,10 +47,10 @@ LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 
 load_dotenv(ENV_PATH)
 
-REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "127.0.0.1")
-REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # External host for Android (tunnel URL or LAN IP)
+REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
+REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
 REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
-REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")
+REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")  # Will be fetched from Firebase
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
 REMOTE_DEFAULT_CWD = os.getenv("REMOTE_DEFAULT_CWD", BASE_DIR)
 REMOTE_ALLOWED_ROOTS = [p.strip() for p in os.getenv("REMOTE_ALLOWED_ROOTS", "").split(";") if p.strip()] 
@@ -55,14 +59,134 @@ LOCAL_WORKSPACE_ROOT = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
 DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]   
 
-if not REMOTE_ACCESS_TOKEN:
-    REMOTE_ACCESS_TOKEN = secrets.token_urlsafe(32)
-    print("[remote-agent] REMOTE_ACCESS_TOKEN is not set. Temporary token generated:")
-    print(REMOTE_ACCESS_TOKEN)
-    print("Set REMOTE_ACCESS_TOKEN in secrets.env for a stable token.")
-
 # Initialize Firebase
-FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd") 
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
+
+# ============================================================================
+# CLOUDFLARE TUNNEL MANAGER
+# ============================================================================
+
+class CloudflareTunnel:
+    """Manages cloudflared quick tunnel for zero-config remote access"""
+
+    def __init__(self, port: int):
+        self.port = port
+        self.process: Optional[subprocess.Popen] = None
+        self.tunnel_url: Optional[str] = None
+        self._stop_event = threading.Event()
+        self._output_thread: Optional[threading.Thread] = None
+
+    def find_cloudflared(self) -> Optional[str]:
+        """Find cloudflared executable in common locations"""
+        locations = [
+            r"C:\Program Files (x86)\cloudflared\cloudflared.exe",
+            r"C:\Program Files\cloudflared\cloudflared.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\cloudflared\cloudflared.exe"),
+            os.path.expandvars(r"%USERPROFILE%\cloudflared\cloudflared.exe"),
+            os.path.join(BASE_DIR, "cloudflared.exe"),
+            "cloudflared",  # Try PATH
+        ]
+
+        for loc in locations:
+            try:
+                expanded = os.path.expandvars(loc)
+                result = subprocess.run(
+                    [expanded, "version"],
+                    capture_output=True,
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                )
+                if result.returncode == 0:
+                    print(f"[tunnel] Found cloudflared at: {expanded}")
+                    return expanded
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                continue
+        return None
+
+    def start(self) -> Optional[str]:
+        """Start tunnel and return URL"""
+        cloudflared = self.find_cloudflared()
+        if not cloudflared:
+            print("[tunnel] ERROR: cloudflared not found!")
+            print("[tunnel] Install: winget install Cloudflare.cloudflared")
+            return None
+
+        try:
+            print(f"[tunnel] Starting cloudflared tunnel for port {self.port}...")
+            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            self.process = subprocess.Popen(
+                [cloudflared, "tunnel", "--url", f"http://localhost:{self.port}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags
+            )
+
+            url_pattern = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
+            start_time = time.time()
+            timeout = 45
+
+            for line in self.process.stdout:
+                line = line.strip()
+                if line:
+                    print(f"[tunnel] {line}")
+
+                match = url_pattern.search(line)
+                if match:
+                    self.tunnel_url = match.group(0)
+                    print(f"[tunnel] SUCCESS: Tunnel at {self.tunnel_url}")
+                    self._output_thread = threading.Thread(target=self._read_output, daemon=True)
+                    self._output_thread.start()
+                    return self.tunnel_url
+
+                if time.time() - start_time > timeout:
+                    print(f"[tunnel] ERROR: Timeout after {timeout}s")
+                    self.stop()
+                    return None
+
+            return None
+        except Exception as e:
+            print(f"[tunnel] ERROR: {e}")
+            return None
+
+    def _read_output(self):
+        try:
+            for line in self.process.stdout:
+                if self._stop_event.is_set():
+                    break
+                line = line.strip()
+                if line and ("ERR" in line or "error" in line.lower()):
+                    print(f"[tunnel] {line}")
+        except Exception:
+            pass
+
+    def stop(self):
+        self._stop_event.set()
+        if self.process:
+            try:
+                print("[tunnel] Stopping tunnel...")
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            except Exception:
+                pass
+            self.process = None
+            self.tunnel_url = None
+            print("[tunnel] Tunnel stopped")
+
+    @property
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+
+# Global tunnel instance
+_tunnel: Optional[CloudflareTunnel] = None
+
+# ============================================================================
+# FIREBASE INITIALIZATION
+# ============================================================================
 
 def resolve_credentials_path(path: Optional[str]) -> Optional[str]:
     if not path:
@@ -103,95 +227,179 @@ try:
         print("[remote-agent] Firebase not initialized (Credentials path not set).")
 except Exception as e:
     db = None
-    print(f"[remote-agent] Firebase initialization failed: {e}")
+    print(f"[firebase] Firebase initialization failed: {e}")
 
 
-def sync_to_firestore():
-    if not db:
-        return
+def get_firebase_uid() -> Optional[str]:
+    """Get Firebase UID from environment"""
     uid = os.getenv("FIREBASE_UID")
     if not uid:
         doc_path = os.getenv("FIREBASE_DOCUMENT_PATH", "")
         if doc_path.startswith("users/") and "/" in doc_path:
             uid = doc_path.split("/", 2)[1]
-    if not uid:
-        print("[remote-agent] FIREBASE_UID not set. Skipping sync.")
-        return
+    return uid
+
+
+def get_or_create_shared_token(uid: str) -> Optional[str]:
+    """Get existing shared token from Firebase or create new one"""
+    global REMOTE_ACCESS_TOKEN
+
+    if not db:
+        print("[firebase] Cannot get token - Firebase not initialized")
+        return None
+
     try:
-        # 1. Sync connection info
-        # Use REMOTE_PUBLIC_HOST if set (tunnel URL or LAN IP), otherwise fall back to bind host
-        public_host = REMOTE_PUBLIC_HOST or (REMOTE_BIND_HOST if REMOTE_BIND_HOST != "0.0.0.0" else "")
+        doc_ref = db.collection("users").document(uid)
+        doc = doc_ref.get()
 
-        # Validate host - warn if it looks like localhost or won't work remotely
-        is_localhost = public_host in ("127.0.0.1", "localhost", "0.0.0.0", "")
-        is_private_ip = public_host.startswith(("192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
+        if doc.exists:
+            data = doc.to_dict()
+            existing_token = data.get("token")
+            if existing_token:
+                print("[firebase] Using existing shared token from Firebase")
+                REMOTE_ACCESS_TOKEN = existing_token
+                return existing_token
 
-        if is_localhost:
-            print("[remote-agent] ERROR: REMOTE_PUBLIC_HOST is localhost - Android cannot connect!")
-            print("[remote-agent] Set REMOTE_PUBLIC_HOST to your Cloudflare tunnel URL in secrets.env")
-            print("[remote-agent] Skipping Firestore sync to prevent bad config from being saved.")
-            return
+        # No token exists - create new one
+        new_token = secrets.token_urlsafe(32)
+        doc_ref.set({"token": new_token}, merge=True)
+        print("[firebase] Generated new shared token and saved to Firebase")
+        REMOTE_ACCESS_TOKEN = new_token
+        return new_token
 
-        if is_private_ip:
-            print(f"[remote-agent] Warning: REMOTE_PUBLIC_HOST is a private IP ({public_host})")
-            print("[remote-agent] This only works if Android is on the same network.")
-            print("[remote-agent] For remote access, use a Cloudflare tunnel URL instead.")
+    except Exception as e:
+        print(f"[firebase] Failed to get/create token: {e}")
+        if not REMOTE_ACCESS_TOKEN:
+            REMOTE_ACCESS_TOKEN = secrets.token_urlsafe(32)
+            print("[firebase] Using locally generated token (not synced)")
+        return REMOTE_ACCESS_TOKEN
 
-        # Auto-detect secure: true for tunnel URLs (they use HTTPS), false for IPs
-        is_likely_tunnel = public_host and not public_host[0].isdigit() and "." in public_host
-        use_secure = is_likely_tunnel or REMOTE_PUBLIC_HOST.startswith("https://")
 
+def get_local_ip() -> str:
+    """Get local network IP address"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def sync_to_firestore():
+    """Sync connection info and projects to Firestore"""
+    global REMOTE_ACCESS_TOKEN
+
+    if not db:
+        return
+
+    uid = get_firebase_uid()
+    if not uid:
+        print("[firebase] FIREBASE_UID not set. Skipping sync.")
+        return
+
+    try:
+        # Determine host and connection mode
+        tunnel_url = _tunnel.tunnel_url if _tunnel else None
+        local_ip = get_local_ip()
+
+        if tunnel_url:
+            # Use tunnel - extract hostname
+            parsed = urlparse(tunnel_url)
+            public_host = parsed.netloc
+            use_port = 443
+            use_secure = True
+            print(f"[firebase] Syncing tunnel URL: {tunnel_url}")
+        elif REMOTE_PUBLIC_HOST:
+            # Manual public host configured
+            public_host = REMOTE_PUBLIC_HOST
+            use_port = REMOTE_PORT
+            use_secure = not public_host[0].isdigit()
+            print(f"[firebase] Syncing manual host: {public_host}")
+        else:
+            # Local IP only
+            public_host = local_ip
+            use_port = REMOTE_PORT
+            use_secure = False
+            print(f"[firebase] Syncing local IP: {local_ip}:{REMOTE_PORT}")
+
+        # Connection data
         conn_data = {
             "host": public_host,
-            "pmPort": REMOTE_PORT,
-            "idePort": REMOTE_PORT,
+            "pmPort": use_port,
+            "idePort": use_port,
             "token": REMOTE_ACCESS_TOKEN,
             "secure": use_secure,
+            "tunnelUrl": tunnel_url or "",
+            "localIp": local_ip,
+            "localPort": REMOTE_PORT,
+            "online": True,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "agent": "python-agent",
             "version": VERSION
         }
+
         user_ref = db.collection("users").document(uid)
         user_ref.set(conn_data, merge=True)
         user_ref.collection("config").document("connection").set(conn_data, merge=True)
-        
-        # 2. Sync projects
+
+        # Sync projects
         registry = compute_registry()
         projects_ref = user_ref.collection("projects")
-        
-        # We'll use a batch for efficiency
         batch = db.batch()
-        
+
         for name, status in registry.items():
             if name.lower() in HIDDEN_PROJECTS:
                 continue
-                
+
             project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name) if status == "Local" else os.path.join(DRIVE_ROOT_FOLDER_ID or "", name)
             manifest_path = os.path.join(project_path, "omni.json")
-            
+
             project_data = {
                 "name": name,
                 "status": status,
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
-            
-            # Load extra info from omni.json if it exists
+
             if os.path.exists(manifest_path):
                 try:
                     with open(manifest_path, "r", encoding="utf-8") as f:
                         manifest = json.load(f)
-                    # Merge manifest data (software, external paths, etc)
                     project_data.update(manifest)
                 except Exception:
                     pass
-            
+
             doc_ref = projects_ref.document(name)
             batch.set(doc_ref, project_data, merge=True)
-            
+
         batch.commit()
-        print(f"[remote-agent] Synced connection info and {len(registry)} projects to Firestore for UID: {uid}")
+        print(f"[firebase] Synced: host={public_host}, secure={use_secure}, projects={len(registry)}")
+
     except Exception as e:
-        print(f"[remote-agent] Firestore sync failed: {e}")
+        print(f"[firebase] Firestore sync failed: {e}")
+
+
+def set_offline_status():
+    """Mark agent as offline in Firebase"""
+    if not db:
+        return
+
+    uid = get_firebase_uid()
+    if not uid:
+        return
+
+    try:
+        offline_data = {
+            "online": False,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }
+        user_ref = db.collection("users").document(uid)
+        user_ref.set(offline_data, merge=True)
+        user_ref.collection("config").document("connection").set(offline_data, merge=True)
+        print("[firebase] Marked as offline")
+    except Exception as e:
+        print(f"[firebase] Failed to set offline status: {e}")
 
 
 
@@ -521,6 +729,7 @@ async def health(request: Request):
         "app": APP_NAME,
         "version": VERSION,
         "time": datetime.datetime.now().isoformat(),
+        "tunnel": _tunnel.tunnel_url if _tunnel else None,
     }
 
 
@@ -676,10 +885,80 @@ async def ws_terminal(ws: WebSocket):
                     _sessions.pop(sid, None)
 
 
+# ============================================================================
+# STARTUP
+# ============================================================================
+
+def startup_sequence():
+    """Run startup sequence: tunnel + Firebase sync"""
+    global _tunnel, REMOTE_ACCESS_TOKEN
+
+    print("=" * 60)
+    print(f"{APP_NAME} v{VERSION}")
+    print("=" * 60)
+
+    uid = get_firebase_uid()
+    if not uid:
+        print("[startup] WARNING: FIREBASE_UID not set - cannot sync to Firebase")
+        if not REMOTE_ACCESS_TOKEN:
+            REMOTE_ACCESS_TOKEN = secrets.token_urlsafe(32)
+            print(f"[startup] Generated local token: {REMOTE_ACCESS_TOKEN}")
+    else:
+        print(f"[startup] Firebase UID: {uid}")
+        # Get or create shared token from Firebase
+        get_or_create_shared_token(uid)
+
+    # Start cloudflared tunnel
+    _tunnel = CloudflareTunnel(REMOTE_PORT)
+    tunnel_url = _tunnel.start()
+
+    if tunnel_url:
+        print(f"[startup] Remote access: {tunnel_url}")
+    else:
+        local_ip = get_local_ip()
+        print(f"[startup] Tunnel failed - local access only: http://{local_ip}:{REMOTE_PORT}")
+
+    # Sync to Firebase
+    sync_to_firestore()
+
+    print("=" * 60)
+    print(f"Server ready on port {REMOTE_PORT}")
+    if _tunnel and _tunnel.tunnel_url:
+        print(f"Connect from anywhere: {_tunnel.tunnel_url}")
+    print("=" * 60)
+
+
+def shutdown_sequence():
+    """Clean shutdown: stop tunnel, mark offline"""
+    global _tunnel
+
+    print("[shutdown] Shutting down...")
+
+    if _tunnel:
+        _tunnel.stop()
+        _tunnel = None
+
+    set_offline_status()
+    print("[shutdown] Goodbye!")
+
+
 if __name__ == "__main__":
     import uvicorn
+    import atexit
+    import signal
 
-    # sync_to_firestore() # Not defined
-    print(f"{APP_NAME} listening on {REMOTE_BIND_HOST}:{REMOTE_PORT}")
-    sync_to_firestore()
+    # Register shutdown handlers
+    atexit.register(shutdown_sequence)
+
+    def signal_handler(signum, frame):
+        shutdown_sequence()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Run startup sequence
+    startup_sequence()
+
+    # Start server
     uvicorn.run(app, host=REMOTE_BIND_HOST, port=REMOTE_PORT, reload=False)

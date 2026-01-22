@@ -173,7 +173,13 @@ fun OmniRemoteApp() {
     fun buildBaseHost(portStr: String): String {
         val cleanHost = normalizedHost()
         val cleanPort = portStr.trim()
-        return if (cleanPort.isBlank()) cleanHost else "$cleanHost:$cleanPort"
+        if (cleanPort.isBlank()) return cleanHost
+        
+        val portInt = cleanPort.toIntOrNull()
+        if (secure && portInt == 443) return cleanHost
+        if (!secure && portInt == 80) return cleanHost
+        
+        return "$cleanHost:$cleanPort"
     }
 
     fun disconnectWebSocket() {
