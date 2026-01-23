@@ -13,6 +13,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
+import java.util.concurrent.ConcurrentHashMap
 
 data class CommandRequest(val cmd: String, val cwd: String?)
 data class CommandResponse(val output: String, val exitCode: Int)
@@ -23,6 +24,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     private var server: Javalin? = null
     private val objectMapper = ObjectMapper()
     private val defaultFirebaseProjectId = "omniremote-e7afd"
+    private val sessions = ConcurrentHashMap<String, Process>()
 
     fun start(port: Int, token: String) {
         if (server != null) {
@@ -64,7 +66,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
                 ws.onMessage { ctx ->
                     val message = ctx.message()
-                    onLog("Terminal message: $message")
+                    // onLog("Terminal message: $message")
                     try {
                         val data = objectMapper.readValue(message, Map::class.java)
                         val type = data["type"] as? String
@@ -80,32 +82,71 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                                     .redirectErrorStream(true)
                                     .start()
 
+                                val sessionId = java.util.UUID.randomUUID().toString()
+                                sessions[sessionId] = process
+
                                 ctx.send(objectMapper.writeValueAsString(mapOf(
                                     "type" to "started",
-                                    "sessionId" to java.util.UUID.randomUUID().toString()
+                                    "sessionId" to sessionId
                                 )))
 
-                                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                                    var line: String?
-                                    while (reader.readLine().also { line = it } != null) {
-                                        ctx.send(objectMapper.writeValueAsString(mapOf(
-                                            "type" to "output",
-                                            "data" to line
-                                        )))
+                                Thread {
+                                    try {
+                                        val reader = process.inputStream.bufferedReader()
+                                        val buffer = CharArray(1024)
+                                        var read: Int
+                                        while (process.isAlive || process.inputStream.available() > 0) {
+                                            read = reader.read(buffer)
+                                            if (read == -1) break
+                                            if (read > 0) {
+                                                val chunk = String(buffer, 0, read)
+                                                try {
+                                                    ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                        "type" to "output",
+                                                        "sessionId" to sessionId,
+                                                        "data" to chunk
+                                                    )))
+                                                } catch (e: Exception) {
+                                                    break
+                                                }
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                         // ignore
+                                    } finally {
+                                        val exitCode = try { process.waitFor() } catch(e:Exception) { -1 }
+                                        try {
+                                            ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                "type" to "exit",
+                                                "sessionId" to sessionId,
+                                                "code" to exitCode.toString()
+                                            )))
+                                        } catch(e:Exception) {}
+                                        sessions.remove(sessionId)
                                     }
-                                }
-
-                                val exitCode = process.waitFor()
-                                ctx.send(objectMapper.writeValueAsString(mapOf(
-                                    "type" to "exit",
-                                    "code" to exitCode.toString()
-                                )))
+                                }.start()
                             }
                             "stdin" -> {
-                                onLog("stdin not yet implemented")
+                                val sessionId = data["sessionId"] as? String
+                                val inputData = data["data"] as? String
+                                if (sessionId != null && inputData != null) {
+                                    val proc = sessions[sessionId]
+                                    if (proc != null) {
+                                        try {
+                                            val writer = proc.outputStream.bufferedWriter()
+                                            writer.write(inputData)
+                                            writer.flush()
+                                        } catch (e: Exception) {
+                                            onLog("Failed to write to stdin: ${e.message}")
+                                        }
+                                    }
+                                }
                             }
                             "cancel" -> {
-                                onLog("cancel not yet implemented")
+                                val sessionId = data["sessionId"] as? String
+                                if (sessionId != null) {
+                                    sessions[sessionId]?.destroy()
+                                }
                             }
                             else -> {
                                 ctx.send(objectMapper.writeValueAsString(mapOf(
@@ -124,6 +165,8 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
                 ws.onClose { ctx ->
                     onLog("Terminal disconnected")
+                    sessions.values.forEach { try { it.destroy() } catch(e:Exception){} }
+                    sessions.clear()
                 }
             }
         }.start(port)
@@ -134,6 +177,8 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     fun stop() {
         server?.stop()
         server = null
+        sessions.values.forEach { try { it.destroy() } catch(e:Exception){} }
+        sessions.clear()
         onLog("Host server stopped.")
     }
 
