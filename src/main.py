@@ -245,21 +245,36 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=40)
         self.btn_confirm.pack(fill="x", padx=20, pady=10)
+        self.scanning = True
+        ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 5-10 seconds)", text_color="gray").pack(pady=40)
         threading.Thread(target=self._scan, daemon=True).start()
     def _scan(self):
         try:
             res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
             lines = res.stdout.splitlines(); start = next((i+1 for i,l in enumerate(lines) if l.startswith("---")), 0)
             self.apps = [(p[0].strip(), p[1].strip()) for l in lines[start:] if (p:=l.split("  ")) and len(p)>=2 and len(p[1].strip())>2]
+        except: self.apps = []
+        finally:
+            self.scanning = False
             self.after(0, self._filter_list)
-        except: pass
     def _filter_list(self, *a):
-        q = self.search_var.get().lower(); [w.destroy() for w in self.scroll.winfo_children()]
+        [w.destroy() for w in self.scroll.winfo_children()]
+        if self.scanning:
+            ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 5-10 seconds)", text_color="gray").pack(pady=40)
+            return
+
+        q = self.search_var.get().lower()
         count = 0
+        found_any = False
         for n, i in self.apps:
             if q in n.lower() or q in i.lower():
+                found_any = True
                 if count > 80: break
                 self._create_row(n, i); count += 1
+
+        if not found_any:
+            msg = "No matches found." if self.apps else "No software found."
+            ctk.CTkLabel(self.scroll, text=msg, text_color="gray").pack(pady=20)
     def _create_row(self, n, i):
         f = ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=2)
         sel = i in self.selected_ids
@@ -397,8 +412,7 @@ class SettingsWindow(ctk.CTkToplevel):
         e.insert(0, "8765")  # Default
 
         # Help text
-        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.
-LAN IP only works on same network. 127.0.0.1 will NOT work!"
+        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.\nLAN IP only works on same network. 127.0.0.1 will NOT work!"
         ctk.CTkLabel(self.scroll, text=help_text, text_color="#f97316", font=("", 11)).pack(anchor="w", pady=(5,10))
 
         # Restart agent checkbox
@@ -456,9 +470,7 @@ LAN IP only works on same network. 127.0.0.1 will NOT work!"
         from tkinter import messagebox
         messagebox.showinfo(
             "Cloudflare Tunnel",
-            "No tunnel config found.
-
-"
+            "No tunnel config found.\n\n"
             "Paste your tunnel URL directly (e.g., omni.yourdomain.com)"
         )
 
