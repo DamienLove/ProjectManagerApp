@@ -13,6 +13,9 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.URI
 
 data class CommandRequest(val cmd: String, val cwd: String?)
 data class CommandResponse(val output: String, val exitCode: Int)
@@ -151,12 +154,14 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 val parts = docPath.split('/')
                 val collection = parts[0]
                 val userDocId = parts[1]
+                val publicHost = resolvePublicHost(env)
                 val data = mapOf(
-                    "host" to (System.getenv("REMOTE_SYNC_HOST") ?: "127.0.0.1"),
+                    "host" to publicHost,
                     "pmPort" to port,
                     "idePort" to port,
                     "token" to token,
                     "updated_at" to com.google.cloud.Timestamp.now(),
+                    "secure" to isSecureHost(publicHost),
                     "agent" to "intellij-plugin"
                 )
                 // Write to root level (primary location for Android app)
@@ -230,10 +235,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
     private fun loadEnvFile(): Map<String, String> {
         val base = project.basePath ?: return emptyMap()
-        val envFile = File(base, "secrets.env")
-        if (!envFile.exists()) {
-            return emptyMap()
-        }
+        val envFile = findEnvFile(File(base)) ?: return emptyMap()
         val env = mutableMapOf<String, String>()
         envFile.readLines().forEach { line ->
             val trimmed = line.trim()
@@ -251,6 +253,64 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             }
         }
         return env
+    }
+
+    private fun resolvePublicHost(env: Map<String, String>): String {
+        val tunnelRaw = System.getenv("REMOTE_TUNNEL_URL")
+            ?: env["REMOTE_TUNNEL_URL"]
+        if (!tunnelRaw.isNullOrBlank()) {
+            val tunnelHost = normalizeHost(tunnelRaw)
+            if (tunnelHost.isNotBlank()) return tunnelHost
+        }
+        val raw = System.getenv("REMOTE_PUBLIC_HOST")
+            ?: env["REMOTE_PUBLIC_HOST"]
+            ?: ""
+        val normalized = normalizeHost(raw)
+        return if (normalized.isNotBlank()) normalized else getLocalIp()
+    }
+
+    private fun normalizeHost(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return try {
+                URI(trimmed).host ?: trimmed
+            } catch (_: Exception) {
+                trimmed
+            }
+        }
+        return trimmed
+    }
+
+    private fun getLocalIp(): String {
+        return try {
+            DatagramSocket().use { socket ->
+                socket.connect(InetAddress.getByName("8.8.8.8"), 53)
+                socket.localAddress.hostAddress
+            }
+        } catch (_: Exception) {
+            try {
+                InetAddress.getLocalHost().hostAddress ?: "127.0.0.1"
+            } catch (_: Exception) {
+                "127.0.0.1"
+            }
+        }
+    }
+
+    private fun isSecureHost(host: String): Boolean {
+        return host.isNotBlank() && !host.first().isDigit()
+    }
+
+    private fun findEnvFile(start: File): File? {
+        var dir: File? = start
+        repeat(5) {
+            val currentDir = dir ?: return null
+            val envFile = File(currentDir, "secrets.env")
+            if (envFile.exists()) {
+                return envFile
+            }
+            dir = currentDir.parentFile
+        }
+        return null
     }
 
     private fun executeCommand(command: String, workingDir: String?): CommandResponse {

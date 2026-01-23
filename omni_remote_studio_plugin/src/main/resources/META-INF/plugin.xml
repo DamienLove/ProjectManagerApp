@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.damiennichols.omniremote.studio</id>
     <name>Omni Remote</name>
-    <version>4.4.0</version>
+    <version>4.6.0</version>
     <vendor email="me@damiennichols.com">Damien Nichols</vendor>
     <description><![CDATA[
     Omni Remote tool window for connecting to the local Omni Remote Agent.

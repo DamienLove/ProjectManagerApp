@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 import sys
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.5.0"
+VERSION = "4.6.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -46,6 +46,35 @@ CLOUD_REGISTRY_FILENAME = "project_registry.json"
 LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 
 load_dotenv(ENV_PATH)
+
+
+def save_env_setting(key: str, value: str) -> None:
+    """Persist env setting to secrets.env for other modules (sync UI, plugin)."""
+    try:
+        value = str(value).replace('\0', '').strip()
+        lines = []
+        found = False
+        if os.path.exists(ENV_PATH):
+            try:
+                with open(ENV_PATH, 'rb') as f:
+                    raw = f.read().replace(b'\x00', b'')
+                text = raw.decode('utf-8', errors='ignore')
+                for line in text.splitlines():
+                    if line.strip().startswith(f"{key}="):
+                        lines.append(f"{key}={value}")
+                        found = True
+                    else:
+                        lines.append(line)
+            except Exception:
+                pass
+        if not found:
+            lines.append(f"{key}={value}")
+        os.makedirs(os.path.dirname(ENV_PATH), exist_ok=True)
+        with open(ENV_PATH, 'w', encoding='utf-8') as f:
+            f.write("\n".join(lines) + "\n")
+        os.environ[key] = value
+    except Exception:
+        pass
 
 REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
 REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
@@ -75,6 +104,9 @@ class CloudflareTunnel:
         self.tunnel_url: Optional[str] = None
         self._stop_event = threading.Event()
         self._output_thread: Optional[threading.Thread] = None
+        self._ready_event = threading.Event()
+        self._on_ready: Optional[Callable[[str], None]] = None
+        self._url_pattern = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
 
     def find_cloudflared(self) -> Optional[str]:
         """Find cloudflared executable in common locations"""
@@ -103,8 +135,8 @@ class CloudflareTunnel:
                 continue
         return None
 
-    def start(self) -> Optional[str]:
-        """Start tunnel and return URL"""
+    def start(self, on_ready: Optional[Callable[[str], None]] = None, wait_timeout: int = 30) -> Optional[str]:
+        """Start tunnel and return URL when available (non-blocking beyond wait_timeout)."""
         cloudflared = self.find_cloudflared()
         if not cloudflared:
             print("[tunnel] ERROR: cloudflared not found!")
@@ -122,29 +154,14 @@ class CloudflareTunnel:
                 bufsize=1,
                 creationflags=creationflags
             )
+            self._on_ready = on_ready
+            self._output_thread = threading.Thread(target=self._read_output, daemon=True)
+            self._output_thread.start()
 
-            url_pattern = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
-            start_time = time.time()
-            timeout = 45
-
-            for line in self.process.stdout:
-                line = line.strip()
-                if line:
-                    print(f"[tunnel] {line}")
-
-                match = url_pattern.search(line)
-                if match:
-                    self.tunnel_url = match.group(0)
-                    print(f"[tunnel] SUCCESS: Tunnel at {self.tunnel_url}")
-                    self._output_thread = threading.Thread(target=self._read_output, daemon=True)
-                    self._output_thread.start()
-                    return self.tunnel_url
-
-                if time.time() - start_time > timeout:
-                    print(f"[tunnel] ERROR: Timeout after {timeout}s")
-                    self.stop()
-                    return None
-
+            # Wait briefly for the URL (but keep tunnel alive even if it takes longer).
+            if self._ready_event.wait(timeout=wait_timeout):
+                return self.tunnel_url
+            print(f"[tunnel] Waiting for URL... (continuing in background)")
             return None
         except Exception as e:
             print(f"[tunnel] ERROR: {e}")
@@ -156,8 +173,24 @@ class CloudflareTunnel:
                 if self._stop_event.is_set():
                     break
                 line = line.strip()
-                if line and ("ERR" in line or "error" in line.lower()):
-                    print(f"[tunnel] {line}")
+                if not line:
+                    continue
+                print(f"[tunnel] {line}")
+                if self.tunnel_url is None:
+                    match = self._url_pattern.search(line)
+                    if match:
+                        self.tunnel_url = match.group(0)
+                        print(f"[tunnel] SUCCESS: Tunnel at {self.tunnel_url}")
+                        self._ready_event.set()
+                        if self._on_ready:
+                            try:
+                                self._on_ready(self.tunnel_url)
+                            except Exception:
+                                pass
+                        continue
+                if ("ERR" in line or "error" in line.lower()):
+                    # Already printed above; no extra action needed.
+                    pass
         except Exception:
             pass
 
@@ -285,6 +318,28 @@ def get_local_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
+
+def is_port_available(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, port))
+        return True
+    except Exception:
+        return False
+
+def pick_available_port(host: str, preferred: int) -> int:
+    if is_port_available(host, preferred):
+        return preferred
+    for offset in range(1, 20):
+        candidate = preferred + offset
+        if is_port_available(host, candidate):
+            return candidate
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, 0))
+            return int(s.getsockname()[1])
+    except Exception:
+        return preferred
 
 
 def sync_to_firestore():
@@ -897,6 +952,14 @@ def startup_sequence():
     print(f"{APP_NAME} v{VERSION}")
     print("=" * 60)
 
+    # Ensure we can bind the port before starting services.
+    global REMOTE_PORT
+    chosen_port = pick_available_port(REMOTE_BIND_HOST, REMOTE_PORT)
+    if chosen_port != REMOTE_PORT:
+        print(f"[startup] Port {REMOTE_PORT} unavailable, using {chosen_port} instead.")
+        REMOTE_PORT = chosen_port
+        os.environ["REMOTE_PORT"] = str(REMOTE_PORT)
+
     uid = get_firebase_uid()
     if not uid:
         print("[startup] WARNING: FIREBASE_UID not set - cannot sync to Firebase")
@@ -909,16 +972,33 @@ def startup_sequence():
         get_or_create_shared_token(uid)
 
     # Start cloudflared tunnel
+    def _on_tunnel_ready(url: str):
+        global REMOTE_PUBLIC_HOST
+        try:
+            parsed = urlparse(url)
+            host = parsed.netloc or url
+            save_env_setting("REMOTE_PUBLIC_HOST", host)
+            save_env_setting("REMOTE_TUNNEL_URL", url)
+            REMOTE_PUBLIC_HOST = host
+            print(f"[startup] Tunnel ready: {url}")
+        except Exception:
+            pass
+        # Re-sync with tunnel info
+        try:
+            sync_to_firestore()
+        except Exception:
+            pass
+
     _tunnel = CloudflareTunnel(REMOTE_PORT)
-    tunnel_url = _tunnel.start()
+    tunnel_url = _tunnel.start(on_ready=_on_tunnel_ready, wait_timeout=30)
 
     if tunnel_url:
         print(f"[startup] Remote access: {tunnel_url}")
     else:
         local_ip = get_local_ip()
-        print(f"[startup] Tunnel failed - local access only: http://{local_ip}:{REMOTE_PORT}")
+        print(f"[startup] Tunnel pending - local access only: http://{local_ip}:{REMOTE_PORT}")
 
-    # Sync to Firebase
+    # Initial sync to Firebase (will be re-synced when tunnel is ready)
     sync_to_firestore()
 
     print("=" * 60)
