@@ -413,6 +413,8 @@ _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
 
 _registry_lock = threading.Lock()
+_cached_registry: Optional[Dict[str, str]] = None
+_cached_registry_mtime: float = 0.0
 
 
 def log(msg: str) -> None:
@@ -485,20 +487,50 @@ def save_registry(registry: Dict[str, str]) -> None:
         json.dump(registry, f, indent=2)
 
 def compute_registry() -> Dict[str, str]:
+    global _cached_registry, _cached_registry_mtime
     with _registry_lock:
         os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
         local_folders = {
             f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
             if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
         }
-        registry = load_registry()
+
+        # Check if registry file modified on disk
+        current_mtime = 0.0
+        if os.path.exists(LOCAL_REGISTRY_PATH):
+            current_mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+
+        # Reload if not cached or file changed
+        if _cached_registry is None or current_mtime != _cached_registry_mtime:
+            _cached_registry = load_registry()
+            _cached_registry_mtime = current_mtime
+
+        # Create a working copy to detect changes
+        registry = _cached_registry.copy()
+        changes_made = False
+
         for name in local_folders:
-            registry[name] = "Local"
+            if registry.get(name) != "Local":
+                registry[name] = "Local"
+                changes_made = True
+
         for name in list(registry.keys()):
             if name not in local_folders:
-                registry[name] = "Cloud"
-        save_registry(registry)
-        return registry
+                if registry.get(name) != "Cloud":
+                    registry[name] = "Cloud"
+                    changes_made = True
+
+        if changes_made:
+            save_registry(registry)
+            # Update cache after save
+            _cached_registry = registry
+            if os.path.exists(LOCAL_REGISTRY_PATH):
+                _cached_registry_mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+            else:
+                _cached_registry_mtime = 0.0
+            return registry
+
+        return _cached_registry
 
 def force_remove_readonly(func, path, excinfo):
     try:
