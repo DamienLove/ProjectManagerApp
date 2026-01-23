@@ -432,13 +432,20 @@ def require_token_from_request(request: Request) -> None:
         auth = request.headers.get("Authorization", "")
         if auth.lower().startswith("bearer "):
             token = auth.split(" ", 1)[1].strip()
-    if token != REMOTE_ACCESS_TOKEN:
+
+    if not token:
+        token = ""
+
+    if not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def require_token_from_ws(ws: WebSocket) -> None:
     token = ws.headers.get("X-Omni-Token") or ws.query_params.get("token")
-    if token != REMOTE_ACCESS_TOKEN:
+    if not token:
+        token = ""
+
+    if not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -907,6 +914,11 @@ def startup_sequence():
         print(f"[startup] Firebase UID: {uid}")
         # Get or create shared token from Firebase
         get_or_create_shared_token(uid)
+
+    # Final safety check: ensure token is never empty
+    if not REMOTE_ACCESS_TOKEN:
+        REMOTE_ACCESS_TOKEN = secrets.token_urlsafe(32)
+        print(f"[startup] WARNING: Token was empty after init. Generated local token: {REMOTE_ACCESS_TOKEN}")
 
     # Start cloudflared tunnel
     _tunnel = CloudflareTunnel(REMOTE_PORT)
