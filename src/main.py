@@ -2006,23 +2006,6 @@ class ProjectManagerApp(ctk.CTk):
         d=ctk.CTkInputDialog(text="Name:", title="New Project"); bring_to_front(d, self); n=d.get_input() 
         if n: os.makedirs(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), n), exist_ok=True); self._refresh_projects()
 
-if __name__ == "__main__":
-    try:
-        if getattr(sys, "frozen", False):
-            hide_console_window()
-        log_startup("Starting OmniProjectSync...")
-        app = ProjectManagerApp()
-        app.protocol("WM_DELETE_WINDOW", app.on_close)
-        app.mainloop()
-    except Exception as e:
-        log_startup(f"FATAL: {e}")
-        log_startup(traceback.format_exc())
-        try:
-            import tkinter.messagebox as mb
-            mb.showerror("OmniProjectSync Error", str(e))
-        except Exception:
-            pass
-
     def _ensure_visible(self):
         try:
             self.update_idletasks()
@@ -2042,3 +2025,21 @@ if __name__ == "__main__":
             log_startup("Ensured main window visible")
         except Exception as e:
             log_startup(f"Ensure visible failed: {e}")
+
+if __name__ == "__main__":
+    try:
+        if getattr(sys, "frozen", False):
+            hide_console_window()
+        log_startup("Starting OmniProjectSync...")
+        app = ProjectManagerApp()
+        app.protocol("WM_DELETE_WINDOW", app.on_close)
+        app.mainloop()
+    except Exception as e:
+        log_startup(f"FATAL: {e}")
+        log_startup(traceback.format_exc())
+        try:
+            import tkinter.messagebox as mb
+            mb.showerror("OmniProjectSync Error", str(e))
+        except Exception:
+            pass
+
