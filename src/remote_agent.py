@@ -469,6 +469,8 @@ _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
 
 _registry_lock = threading.Lock()
+_registry_cache: Optional[Dict[str, str]] = None
+_registry_mtime: float = 0.0
 
 
 def log(msg: str) -> None:
@@ -527,18 +529,33 @@ def is_path_safe(path: str) -> bool:
     return True
 
 def load_registry() -> Dict[str, str]:
-    if os.path.exists(LOCAL_REGISTRY_PATH):
-        try:
-            with open(LOCAL_REGISTRY_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    global _registry_cache, _registry_mtime
+    if not os.path.exists(LOCAL_REGISTRY_PATH):
+        return {}
+    try:
+        mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+        if _registry_cache is not None and mtime == _registry_mtime:
+            return _registry_cache.copy()
+
+        with open(LOCAL_REGISTRY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _registry_cache = data
+            _registry_mtime = mtime
+            return data.copy()
+    except Exception:
+        return {}
 
 def save_registry(registry: Dict[str, str]) -> None:
+    global _registry_cache, _registry_mtime
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(LOCAL_REGISTRY_PATH, "w", encoding="utf-8") as f:
         json.dump(registry, f, indent=2)
+
+    _registry_cache = registry.copy()
+    try:
+        _registry_mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+    except Exception:
+        _registry_mtime = 0.0
 
 def compute_registry() -> Dict[str, str]:
     with _registry_lock:
@@ -548,12 +565,16 @@ def compute_registry() -> Dict[str, str]:
             if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
         }
         registry = load_registry()
+        original_registry = registry.copy()
+
         for name in local_folders:
             registry[name] = "Local"
         for name in list(registry.keys()):
             if name not in local_folders:
                 registry[name] = "Cloud"
-        save_registry(registry)
+
+        if registry != original_registry:
+            save_registry(registry)
         return registry
 
 def force_remove_readonly(func, path, excinfo):
