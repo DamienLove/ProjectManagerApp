@@ -7,6 +7,7 @@
     Omni Remote tool window for connecting to the local Omni Remote Agent.
     ]]></description>
     <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Omni Remote" anchor="right" factoryClass="com.damiennichols.omniremote.OmniRemoteToolWindowFactory" />

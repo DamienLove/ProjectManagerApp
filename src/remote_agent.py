@@ -715,11 +715,58 @@ def activate_project(name: str) -> Dict[str, str]:
 
 
 class CommandSession:
-    def __init__(self, session_id: str, proc: subprocess.Popen, ws: WebSocket):
+    def __init__(self, session_id: str, ws: WebSocket):
         self.session_id = session_id
-        self.proc = proc
         self.ws = ws
         self.started = datetime.datetime.now()
+
+class LocalSession(CommandSession):
+    def __init__(self, session_id: str, proc: subprocess.Popen, ws: WebSocket):
+        super().__init__(session_id, ws)
+        self.proc = proc
+
+class IDESession(CommandSession):
+    def __init__(self, session_id: str, ws: WebSocket, ide_ws):
+        super().__init__(session_id, ws)
+        self.ide_ws = ide_ws
+        self.ide_session_id = None
+
+
+async def start_ide_proxy_session(loop: asyncio.AbstractEventLoop, ws: WebSocket, run_data: dict) -> str:
+    import websockets
+    session_id = str(uuid.uuid4())
+    
+    ide_ws = await websockets.connect(f"ws://127.0.0.1:{IDE_PORT}/ws/terminal?token={REMOTE_ACCESS_TOKEN}")
+    await ide_ws.send(json.dumps(run_data))
+    
+    session = IDESession(session_id, ws, ide_ws)
+    with _sessions_lock:
+        _sessions[session_id] = session
+
+    async def relay():
+        try:
+            async for msg in ide_ws:
+                data = json.loads(msg)
+                if data.get("type") == "started":
+                    session.ide_session_id = data.get("sessionId")
+                
+                # Relay to client
+                await ws.send_text(msg)
+                
+                if data.get("type") == "exit":
+                    break
+        except Exception:
+            pass
+        finally:
+            with _sessions_lock:
+                _sessions.pop(session_id, None)
+            try:
+                await ide_ws.close()
+            except Exception:
+                pass
+
+    asyncio.create_task(relay())
+    return session_id
 
 
 async def send_ws(ws: WebSocket, payload: Dict[str, str]) -> None: 
@@ -750,7 +797,7 @@ def start_command(loop: asyncio.AbstractEventLoop, ws: WebSocket, cmd: str, cwd:
         shell=True,
     )
 
-    session = CommandSession(session_id, proc, ws)
+    session = LocalSession(session_id, proc, ws)
     with _sessions_lock:
         _sessions[session_id] = session
 
@@ -922,21 +969,18 @@ async def ws_terminal(ws: WebSocket):
             if msg_type == "run":
                 cmd = data.get("cmd")
                 cwd = data.get("cwd")
-                project = data.get("project") # NEW: target project
+                project = data.get("project")
+                tab = data.get("tab")
                 
                 if project and project != "System":
-                    # Proxy to IDE
-                    log(f"WS Proxy to IDE: {project} -> {cmd}")
-                    # For proxying, we need a separate mechanism. 
-                    # For now, let's keep the local shell as default but mark it.
-                    # In a full implementation, we'd open a client WS to the plugin.
-                    # To keep it simple for this step, we'll just allow the agent
-                    # to spawn a shell in the IDE project's directory if we can find it.
-                    ide_resp = await proxy_to_plugin("GET", "/api/projects")
-                    ide_projects = ide_resp.json().get("projects", [])
-                    target = next((p for p in ide_projects if p["name"] == project), None)
-                    if target:
-                        cwd = target["path"]
+                    log(f"Starting IDE proxy session: {project} (tab={tab})")
+                    try:
+                        session_id = await start_ide_proxy_session(loop, ws, data)
+                        await send_ws(ws, {"type": "started", "sessionId": session_id})
+                    except Exception as e:
+                        log(f"IDE Proxy start error: {e}")
+                        await send_ws(ws, {"type": "error", "message": f"IDE proxy failed: {e}"})
+                    continue
                 
                 env_overrides = data.get("env")
 
@@ -960,10 +1004,19 @@ async def ws_terminal(ws: WebSocket):
                 if not session:
                     await send_ws(ws, {"type": "error", "message": "session not found"})
                     continue
+                
                 try:
-                    if session.proc.stdin:
-                        session.proc.stdin.write(text)
-                        session.proc.stdin.flush()
+                    if isinstance(session, LocalSession):
+                        if session.proc.stdin:
+                            session.proc.stdin.write(text)
+                            session.proc.stdin.flush()
+                    elif isinstance(session, IDESession):
+                        if session.ide_session_id:
+                            await session.ide_ws.send(json.dumps({
+                                "type": "stdin",
+                                "sessionId": session.ide_session_id,
+                                "data": text
+                            }))
                 except Exception:
                     await send_ws(ws, {"type": "error", "message": "stdin failed"})
             elif msg_type == "cancel":
@@ -972,7 +1025,13 @@ async def ws_terminal(ws: WebSocket):
                     session = _sessions.get(session_id)
                 if session:
                     try:
-                        session.proc.terminate()
+                        if isinstance(session, LocalSession):
+                            session.proc.terminate()
+                        elif isinstance(session, IDESession):
+                            await session.ide_ws.send(json.dumps({
+                                "type": "cancel",
+                                "sessionId": session.ide_session_id
+                            }))
                     except Exception:
                         pass
             else:

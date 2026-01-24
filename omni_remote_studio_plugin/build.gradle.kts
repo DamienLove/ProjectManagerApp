@@ -17,7 +17,7 @@ kotlin {
 intellij {
     type.set("AI")
     version.set("2024.1.1.12")
-    plugins.set(listOf())
+    plugins.set(listOf("org.jetbrains.plugins.terminal"))
 }
 
 dependencies {

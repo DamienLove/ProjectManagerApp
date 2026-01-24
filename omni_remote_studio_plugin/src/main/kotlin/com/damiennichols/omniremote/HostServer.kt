@@ -9,9 +9,13 @@ import com.google.firebase.cloud.FirestoreClient
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.wm.ToolWindowManager
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import io.javalin.Javalin
+import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import java.awt.Component
+import java.awt.Container
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -58,8 +62,10 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
             
             get("/api/projects") { ctx ->
-                val projects = ProjectManager.getInstance().openProjects.map { 
-                    mapOf("name" to it.name, "path" to it.basePath)
+                val projects = ProjectManager.getInstance().openProjects.map { p ->
+                    val toolWindow = ToolWindowManager.getInstance(p).getToolWindow("Terminal")
+                    val tabs = toolWindow?.contentManager?.contents?.map { it.displayName } ?: emptyList<String>()
+                    mapOf("name" to p.name, "path" to p.basePath, "tabs" to tabs)
                 }
                 ctx.json(mapOf("projects" to projects))
             }
@@ -106,6 +112,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                         when (type) {
                             "run" -> {
                                 val projectName = data["project"] as? String
+                                val tabName = data["tab"] as? String
                                 val cmd = data["cmd"] as? String ?: "powershell.exe"
                                 val cwd = data["cwd"] as? String
                                 
@@ -113,6 +120,27 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                                     ProjectManager.getInstance().openProjects.find { it.name == projectName }
                                 } else null
                                 
+                                // If a tab is specified, try to find it and send the command
+                                if (targetProject != null && tabName != null && tabName.isNotBlank()) {
+                                    val toolWindow = ToolWindowManager.getInstance(targetProject).getToolWindow("Terminal")
+                                    val content = toolWindow?.contentManager?.contents?.find { it.displayName == tabName }
+                                    if (content != null) {
+                                        // Attempt to get the terminal widget and send the command
+                                        // This varies by version, but often the component itself or a subcomponent
+                                        val component = content.component
+                                        // Try to find ShellTerminalWidget in the hierarchy
+                                        val widget = findTerminalWidget(component)
+                                        if (widget != null) {
+                                            widget.executeCommand(cmd)
+                                            ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                "type" to "output",
+                                                "data" to "Sent to tab: $tabName\n"
+                                            )))
+                                            return@onMessage
+                                        }
+                                    }
+                                }
+
                                 val workingDir = cwd?.let { File(it) } 
                                     ?: targetProject?.basePath?.let { File(it) }
                                     ?: project.basePath?.let { File(it) }
@@ -402,5 +430,16 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             args.add(currentArg.toString())
         }
         return args
+    }
+
+    private fun findTerminalWidget(component: Component): ShellTerminalWidget? {
+        if (component is ShellTerminalWidget) return component
+        if (component is Container) {
+            for (child in component.components) {
+                val found = findTerminalWidget(child)
+                if (found != null) return found
+            }
+        }
+        return null
     }
 }

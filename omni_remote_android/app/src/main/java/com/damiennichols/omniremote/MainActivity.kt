@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +31,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -131,8 +135,12 @@ fun OmniRemoteApp() {
     var screen by rememberSaveable { mutableStateOf(if (authed) AppScreen.Setup else AppScreen.Login) }
     var projectsLoaded by remember { mutableStateOf(false) }
 
+    var selectedProject by rememberSaveable { mutableStateOf("System") }
+    var selectedTab by rememberSaveable { mutableStateOf("") }
+
     val terminalLines = remember { mutableStateListOf<String>() }
     val projects = remember { mutableStateListOf<Project>() }
+    val ideProjects = remember { mutableStateListOf<JSONObject>() }
 
     val client = remember {
         OkHttpClient.Builder()
@@ -267,6 +275,8 @@ fun OmniRemoteApp() {
         }
         val baseHost = buildBaseHost(pmPort)
         val scheme = if (secure) "https" else "http"
+        
+        // Fetch PM projects
         val url = "$scheme://$baseHost/api/projects"
         val request = Request.Builder()
             .url(url)
@@ -287,6 +297,29 @@ fun OmniRemoteApp() {
         }
         projects.clear()
         projects.addAll(list)
+
+        // Fetch IDE projects
+        try {
+            val ideUrl = "$scheme://$baseHost/api/projects/ide"
+            val ideRequest = Request.Builder()
+                .url(ideUrl)
+                .addHeader("X-Omni-Token", cleanToken)
+                .build()
+            val ideResponse = withContext(Dispatchers.IO) { client.newCall(ideRequest).execute() }
+            val ideBody = ideResponse.body?.string() ?: ""
+            if (ideResponse.isSuccessful) {
+                val ideObj = JSONObject(ideBody)
+                val ideArr = ideObj.optJSONArray("projects") ?: JSONArray()
+                val ideList = mutableListOf<JSONObject>()
+                for (i in 0 until ideArr.length()) {
+                    ideList.add(ideArr.getJSONObject(i))
+                }
+                ideProjects.clear()
+                ideProjects.addAll(ideList)
+            }
+        } catch (e: Exception) {
+            // Ignore IDE fetch errors if plugin not running
+        }
     }
 
     fun refreshProjectsAsync() {
@@ -469,6 +502,8 @@ fun OmniRemoteApp() {
         val payload = JSONObject()
         payload.put("type", "run")
         payload.put("cmd", cmd)
+        payload.put("project", selectedProject)
+        if (selectedTab.isNotBlank()) payload.put("tab", selectedTab)
         if (cwd.isNotBlank()) payload.put("cwd", cwd)
         ws.send(payload.toString())
     }
@@ -583,9 +618,17 @@ fun OmniRemoteApp() {
                 terminalLines = terminalLines,
                 connected = connected,
                 canSendInput = activeSessionId != null,
+                selectedProject = selectedProject,
+                selectedTab = selectedTab,
+                ideProjects = ideProjects,
                 onBack = { screen = AppScreen.Home },
                 onCwdChange = { cwd = it },
                 onCommandChange = { command = it },
+                onProjectSelect = { 
+                    selectedProject = it
+                    selectedTab = ""
+                },
+                onTabSelect = { selectedTab = it },
                 onRun = {
                     sendRun(command)
                     command = ""
@@ -1024,9 +1067,14 @@ private fun TerminalScreen(
     terminalLines: List<String>,
     connected: Boolean,
     canSendInput: Boolean,
+    selectedProject: String,
+    selectedTab: String,
+    ideProjects: List<JSONObject>,
     onBack: () -> Unit,
     onCwdChange: (String) -> Unit,
     onCommandChange: (String) -> Unit,
+    onProjectSelect: (String) -> Unit,
+    onTabSelect: (String) -> Unit,
     onRun: () -> Unit,
     onSendInput: () -> Unit,
     onClear: () -> Unit
@@ -1041,6 +1089,69 @@ private fun TerminalScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Terminal", status = status, onBack = onBack)
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text("Target Context", color = TextMuted, fontSize = 12.sp)
+        var projectMenuExpanded by remember { mutableStateOf(false) }
+        Box {
+            Button(
+                onClick = { projectMenuExpanded = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Panel),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (selectedProject == "System") "OS (System Terminal)" else "Android Studio: $selectedProject")
+            }
+            DropdownMenu(
+                expanded = projectMenuExpanded,
+                onDismissRequest = { projectMenuExpanded = false },
+                modifier = Modifier.background(Panel)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("OS (System Terminal)", color = TextPrimary) },
+                    onClick = {
+                        onProjectSelect("System")
+                        projectMenuExpanded = false
+                    }
+                )
+                ideProjects.forEach { proj ->
+                    val name = proj.optString("name")
+                    DropdownMenuItem(
+                        text = { Text("Android Studio: $name", color = TextPrimary) },
+                        onClick = {
+                            onProjectSelect(name)
+                            projectMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+        
+        val currentProjectObj = ideProjects.find { it.optString("name") == selectedProject }
+        if (currentProjectObj != null) {
+            val tabs = currentProjectObj.optJSONArray("tabs") ?: JSONArray()
+            if (tabs.length() > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Terminal Tabs", color = TextMuted, fontSize = 11.sp)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (i in 0 until tabs.length()) {
+                        val tabName = tabs.getString(i)
+                        item {
+                            Button(
+                                onClick = { onTabSelect(tabName) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selectedTab == tabName) AccentAlt else Panel
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(tabName, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = cwd,
