@@ -912,7 +912,7 @@ async def api_activate_project(name: str, request: Request):
     result = await loop.run_in_executor(None, activate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -922,7 +922,7 @@ async def api_deactivate_project(name: str, request: Request):
     result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -932,7 +932,7 @@ async def api_open_studio_project(name: str, request: Request):
     result = open_studio_project(name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -955,8 +955,6 @@ async def api_command(request: Request):
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        stdout_str = stdout.decode("utf-8", errors="replace")
-        stderr_str = stderr.decode("utf-8", errors="replace")
         stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
         stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
 
