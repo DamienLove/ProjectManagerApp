@@ -318,6 +318,8 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.search_var = ctk.StringVar(); self.search_var.trace("w", self._filter_list)
         ctk.CTkEntry(self, textvariable=self.search_var, placeholder_text="🔍 Search...").pack(fill="x", padx=10, pady=5)
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        self.is_scanning = True
+        ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
         self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=40)
         self.btn_confirm.pack(fill="x", padx=20, pady=10)
         threading.Thread(target=self._scan, daemon=True).start()
@@ -325,10 +327,15 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         try:
             res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
             self.apps = parse_winget_list_output(res.stdout)
-            self.after(0, self._filter_list)
         except: pass
+        finally:
+            self.is_scanning = False
+            self.after(0, self._filter_list)
     def _filter_list(self, *a):
         q = self.search_var.get().lower(); [w.destroy() for w in self.scroll.winfo_children()]
+        if getattr(self, "is_scanning", False):
+            ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+            return
         count = 0
         for n, i in self.apps:
             if q in n.lower() or q in i.lower():
@@ -368,6 +375,9 @@ class InstalledAppsWindow(ctk.CTkToplevel):
         self.app_scroll = ctk.CTkScrollableFrame(left)
         self.app_scroll.pack(fill="both", expand=True)
 
+        self.is_scanning = True
+        ctk.CTkLabel(self.app_scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+
         # Projects (right)
         right = ctk.CTkFrame(self)
         right.pack(side="right", fill="both", expand=True, padx=10, pady=10)
@@ -390,9 +400,11 @@ class InstalledAppsWindow(ctk.CTkToplevel):
             res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
             self.apps = parse_winget_list_output(res.stdout)
             self.filtered_apps = list(self.apps)
-            self.after(0, self._render_apps)
         except Exception as e:
             self.after(0, lambda: self.status_label.configure(text=f"Failed to load apps: {e}"))
+        finally:
+            self.is_scanning = False
+            self.after(0, self._render_apps)
 
     def _filter_apps(self, *a):
         q = self.search_var.get().lower().strip()
@@ -405,6 +417,11 @@ class InstalledAppsWindow(ctk.CTkToplevel):
     def _render_apps(self):
         for w in self.app_scroll.winfo_children():
             w.destroy()
+
+        if getattr(self, "is_scanning", False):
+            ctk.CTkLabel(self.app_scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+            return
+
         self.app_buttons.clear()
 
         for name, app_id in self.filtered_apps[:300]:
