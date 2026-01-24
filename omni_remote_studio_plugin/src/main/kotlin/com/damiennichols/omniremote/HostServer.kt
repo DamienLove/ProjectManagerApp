@@ -8,6 +8,9 @@ import com.google.cloud.firestore.SetOptions
 import com.google.firebase.cloud.FirestoreClient
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
+import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 import io.javalin.Javalin
 import java.io.BufferedReader
 import java.io.File
@@ -21,10 +24,19 @@ data class CommandRequest(val cmd: String, val cwd: String?)
 data class CommandResponse(val output: String, val exitCode: Int)
 data class ProjectInfo(val name: String, val path: String)
 
+
+class TerminalSession(
+    val id: String,
+    val project: Project?,
+    val process: Process,
+    val outputThread: Thread
+)
+
 class HostServer(private val project: Project, private val onLog: (String) -> Unit) {
 
     private var server: Javalin? = null
     private val objectMapper = ObjectMapper()
+    private val sessions = ConcurrentHashMap<String, TerminalSession>()
     private val defaultFirebaseProjectId = "omniremote-e7afd"
 
     fun start(port: Int, token: String) {
@@ -44,6 +56,25 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 }
             }
 
+            
+            get("/api/projects") { ctx ->
+                val projects = ProjectManager.getInstance().openProjects.map { 
+                    mapOf("name" to it.name, "path" to it.basePath)
+                }
+                ctx.json(mapOf("projects" to projects))
+            }
+
+            post("/api/close-project") { ctx ->
+                val name = ctx.queryParam("name")
+                val projectToClose = ProjectManager.getInstance().openProjects.find { it.name == name }
+                if (projectToClose != null) {
+                    com.intellij.openapi.wm.impl.ProjectFrameHelper.getFrameHelper(com.intellij.openapi.wm.WindowManager.getInstance().getFrame(projectToClose))?.close()
+                    ctx.json(mapOf("status" to "closing"))
+                } else {
+                    ctx.status(404).result("Project not found")
+                }
+            }
+
             get("/api/health") { ctx ->
                 ctx.json(mapOf("status" to "ok"))
             }
@@ -55,6 +86,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 ctx.json(response)
             }
 
+            
             ws("/ws/terminal") { ws ->
                 ws.onConnect { ctx ->
                     val requestToken = ctx.header("X-Omni-Token") ?: ctx.queryParam("token")
@@ -67,66 +99,88 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
                 ws.onMessage { ctx ->
                     val message = ctx.message()
-                    onLog("Terminal message: $message")
                     try {
                         val data = objectMapper.readValue(message, Map::class.java)
                         val type = data["type"] as? String
 
                         when (type) {
                             "run" -> {
-                                val cmd = data["cmd"] as? String ?: return@onMessage
+                                val projectName = data["project"] as? String
+                                val cmd = data["cmd"] as? String ?: "powershell.exe"
                                 val cwd = data["cwd"] as? String
-                                onLog("Terminal command: $cmd")
+                                
+                                val targetProject = if (projectName != null && projectName != "System") {
+                                    ProjectManager.getInstance().openProjects.find { it.name == projectName }
+                                } else null
+                                
+                                val workingDir = cwd?.let { File(it) } 
+                                    ?: targetProject?.basePath?.let { File(it) }
+                                    ?: project.basePath?.let { File(it) }
 
-                                val process = ProcessBuilder(parseCommand(cmd))
-                                    .directory(cwd?.let { java.io.File(it) } ?: project.basePath?.let { java.io.File(it) })
-                                    .redirectErrorStream(true)
-                                    .start()
-
+                                val pb = ProcessBuilder(parseCommand(cmd))
+                                if (workingDir != null && workingDir.exists()) pb.directory(workingDir)
+                                pb.redirectErrorStream(true)
+                                val proc = pb.start()
+                                
+                                val sid = UUID.randomUUID().toString()
+                                
+                                val thread = Thread { 
+                                    try {
+                                        val reader = proc.inputStream.bufferedReader()
+                                        val buffer = CharArray(1024)
+                                        var charsRead: Int
+                                        while (reader.read(buffer).also { charsRead = it }) != -1) {
+                                            val output = String(buffer, 0, charsRead)
+                                            ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                "type" to "output",
+                                                "sessionId" to sid,
+                                                "data" to output
+                                            )))
+                                        }
+                                    } catch (e: Exception) { } // TODO: Handle exceptions properly
+                                    
+                                    val exitCode = proc.waitFor()
+                                    ctx.send(objectMapper.writeValueAsString(mapOf(
+                                        "type" to "exit",
+                                        "sessionId" to sid,
+                                        "code" to exitCode.toString()
+                                    )))
+                                    sessions.remove(sid)
+                                }
+                                thread.start()
+                                
+                                val session = TerminalSession(sid, targetProject, proc, thread)
+                                sessions[sid] = session
+                                
                                 ctx.send(objectMapper.writeValueAsString(mapOf(
                                     "type" to "started",
-                                    "sessionId" to java.util.UUID.randomUUID().toString()
-                                )))
-
-                                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                                    var line: String?
-                                    while (reader.readLine().also { line = it } != null) {
-                                        ctx.send(objectMapper.writeValueAsString(mapOf(
-                                            "type" to "output",
-                                            "data" to line
-                                        )))
-                                    }
-                                }
-
-                                val exitCode = process.waitFor()
-                                ctx.send(objectMapper.writeValueAsString(mapOf(
-                                    "type" to "exit",
-                                    "code" to exitCode.toString()
+                                    "sessionId" to sid,
+                                    "project" to (targetProject?.name ?: "System")
                                 )))
                             }
                             "stdin" -> {
-                                onLog("stdin not yet implemented")
+                                val sid = data["sessionId"] as? String ?: return@onMessage
+                                val input = data["data"] as? String ?: ""
+                                val session = sessions[sid]
+                                if (session != null) {
+                                    session.process.outputStream.write(input.toByteArray())
+                                    session.process.outputStream.flush()
+                                }
                             }
                             "cancel" -> {
-                                onLog("cancel not yet implemented")
-                            }
-                            else -> {
-                                ctx.send(objectMapper.writeValueAsString(mapOf(
-                                    "type" to "error",
-                                    "message" to "Unknown message type: $type"
-                                )))
+                                val sid = data["sessionId"] as? String ?: return@onMessage
+                                sessions[sid]?.process?.destroy()
                             }
                         }
                     } catch (e: Exception) {
-                        ctx.send(objectMapper.writeValueAsString(mapOf(
-                            "type" to "error",
-                            "message" to (e.message ?: "Unknown error")
-                        )))
+                        onLog("WS Error: ${e.message}")
                     }
                 }
 
                 ws.onClose { ctx ->
                     onLog("Terminal disconnected")
+                    // We don't automatically kill sessions on close to allow re-attach if needed?
+                    # For now, let's keep it simple and clean up.
                 }
             }
         }.start(port)

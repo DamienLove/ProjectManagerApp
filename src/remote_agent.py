@@ -79,6 +79,7 @@ def save_env_setting(key: str, value: str) -> None:
 REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
 REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
 REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
+IDE_PORT = int(os.getenv("IDE_PORT", "8766"))
 REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")  # Will be fetched from Firebase
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
 REMOTE_DEFAULT_CWD = os.getenv("REMOTE_DEFAULT_CWD", BASE_DIR)
@@ -776,6 +777,17 @@ def start_command(loop: asyncio.AbstractEventLoop, ws: WebSocket, cmd: str, cwd:
     return session_id
 
 
+
+async def proxy_to_plugin(method: str, path: str, body: dict = None, params: dict = None):
+    import httpx
+    url = f"http://127.0.0.1:{IDE_PORT}{path}"
+    headers = {"X-Omni-Token": REMOTE_ACCESS_TOKEN}
+    async with httpx.AsyncClient() as client:
+        if method == "GET":
+            return await client.get(url, headers=headers, params=params)
+        elif method == "POST":
+            return await client.post(url, headers=headers, json=body, params=params)
+
 @app.get("/api/health")
 async def health(request: Request):
     require_token_from_request(request)
@@ -787,6 +799,27 @@ async def health(request: Request):
         "tunnel": _tunnel.tunnel_url if _tunnel else None,
     }
 
+
+
+@app.get("/api/projects/ide")
+async def api_ide_projects(request: Request):
+    require_token_from_request(request)
+    try:
+        resp = await proxy_to_plugin("GET", "/api/projects")
+        return resp.json()
+    except Exception as e:
+        return {"projects": [], "error": str(e)}
+
+@app.post("/api/projects/ide/close")
+async def api_ide_close_project(request: Request):
+    require_token_from_request(request)
+    data = await request.json()
+    name = data.get("name")
+    try:
+        resp = await proxy_to_plugin("POST", "/api/close-project", params={"name": name})
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/projects")
 async def get_projects(request: Request):
@@ -885,10 +918,28 @@ async def ws_terminal(ws: WebSocket):
                 continue
 
             msg_type = data.get("type")
+            
             if msg_type == "run":
                 cmd = data.get("cmd")
                 cwd = data.get("cwd")
+                project = data.get("project") # NEW: target project
+                
+                if project and project != "System":
+                    # Proxy to IDE
+                    log(f"WS Proxy to IDE: {project} -> {cmd}")
+                    # For proxying, we need a separate mechanism. 
+                    # For now, let's keep the local shell as default but mark it.
+                    # In a full implementation, we'd open a client WS to the plugin.
+                    # To keep it simple for this step, we'll just allow the agent
+                    # to spawn a shell in the IDE project's directory if we can find it.
+                    ide_resp = await proxy_to_plugin("GET", "/api/projects")
+                    ide_projects = ide_resp.json().get("projects", [])
+                    target = next((p for p in ide_projects if p["name"] == project), None)
+                    if target:
+                        cwd = target["path"]
+                
                 env_overrides = data.get("env")
+
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
