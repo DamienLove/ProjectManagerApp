@@ -438,10 +438,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
 
     private fun loadEnvFile(): Map<String, String> {
         val base = projectBasePath ?: return emptyMap()
-        val envFile = File(base, "secrets.env")
-        if (!envFile.exists()) {
-            return emptyMap()
-        }
+        val envFile = findEnvFile(File(base)) ?: return emptyMap()
         val env = mutableMapOf<String, String>()
         envFile.readLines().forEach { line ->
             val trimmed = line.trim()
@@ -463,21 +460,38 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
 
     private fun findServiceAccountPath(): String? {
         val base = projectBasePath ?: return null
-        val secretsDir = File(base, "secrets")
-        if (!secretsDir.exists() || !secretsDir.isDirectory) {
-            return null
-        }
-        val jsonFiles = secretsDir.listFiles { f -> f.isFile && f.extension.equals("json", ignoreCase = true) }
-            ?: return null
-        for (file in jsonFiles) {
-            try {
-                val text = file.readText()
-                if (text.contains("\"type\": \"service_account\"")) {
-                    return file.absolutePath
+        var dir: File? = File(base)
+        repeat(5) {
+            val currentDir = dir ?: return null
+            val secretsDir = File(currentDir, "secrets")
+            if (secretsDir.exists() && secretsDir.isDirectory) {
+                val jsonFiles = secretsDir.listFiles { f -> f.isFile && f.extension.equals("json", ignoreCase = true) }
+                    ?: return@repeat
+                for (file in jsonFiles) {
+                    try {
+                        val text = file.readText()
+                        if (text.contains("\"type\": \"service_account\"")) {
+                            return file.absolutePath
+                        }
+                    } catch (_: Exception) {
+                        // ignore unreadable files
+                    }
                 }
-            } catch (_: Exception) {
-                // ignore unreadable files
             }
+            dir = currentDir.parentFile
+        }
+        return null
+    }
+
+    private fun findEnvFile(start: File): File? {
+        var dir: File? = start
+        repeat(5) {
+            val currentDir = dir ?: return null
+            val envFile = File(currentDir, "secrets.env")
+            if (envFile.exists()) {
+                return envFile
+            }
+            dir = currentDir.parentFile
         }
         return null
     }
