@@ -662,7 +662,7 @@ def check_install_software(project_path: str) -> None:
                 log(f"Auto-install software: {app_id}")
                 subprocess.run([
                     "winget", "install", "-e", "--id", app_id, "--silent"
-                ], shell=True)
+                ], shell=False)
         except Exception:
             pass
 
@@ -689,7 +689,7 @@ def open_studio_project(name: str) -> Dict[str, str]:
     if not studio:
         return {"status": "error", "message": "Android Studio not found"}
     try:
-        subprocess.Popen([studio, project_path], shell=True)
+        subprocess.Popen([studio, project_path], shell=False)
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": "Studio launched"}
