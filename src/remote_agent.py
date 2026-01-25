@@ -495,15 +495,13 @@ def require_token_from_request(request: Request) -> None:
         auth = request.headers.get("Authorization", "")
         if auth.lower().startswith("bearer "):
             token = auth.split(" ", 1)[1].strip()
-    # Use compare_digest to prevent timing attacks
-    if not token or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
+    if token is None or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def require_token_from_ws(ws: WebSocket) -> None:
     token = ws.headers.get("X-Omni-Token") or ws.query_params.get("token")
-    # Use compare_digest to prevent timing attacks
-    if not token or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
+    if token is None or not secrets.compare_digest(token, REMOTE_ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
