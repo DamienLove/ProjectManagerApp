@@ -181,6 +181,38 @@ def resolve_credentials_path(path: str | None) -> str | None:
 
 # --- UI WINDOWS ---
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+        self.widget.bind("<FocusIn>", self.show_tip)
+        self.widget.bind("<FocusOut>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text: return
+        try:
+            x = self.widget.winfo_rootx() + 25
+            y = self.widget.winfo_rooty() + 25
+            self.tip_window = ctk.CTkToplevel(self.widget)
+            self.tip_window.wm_overrideredirect(True)
+            self.tip_window.wm_geometry(f"+{x}+{y}")
+            self.tip_window.attributes("-topmost", True)
+            label = ctk.CTkLabel(self.tip_window, text=self.text, height=20, corner_radius=4, fg_color=("gray80", "gray20"), text_color=("black", "white"), font=("", 10))
+            label.pack(padx=5, pady=2)
+        except Exception:
+            pass
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
 class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -540,14 +572,22 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         for w in self.scroll_app_state.winfo_children(): w.destroy()
         for p in self.data.get("external_paths",[]):
             r=ctk.CTkFrame(self.scroll_files, fg_color="transparent"); r.pack(fill="x")
-            ctk.CTkLabel(r, text=p).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_path(x)).pack(side="right")
+            ctk.CTkLabel(r, text=p).pack(side="left")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_path(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove path")
         for s in self.data.get("software",[]):
             r=ctk.CTkFrame(self.scroll_soft, fg_color="transparent"); r.pack(fill="x")
-            ctk.CTkLabel(r, text=s).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=s: self.remove_software(x)).pack(side="right")
+            ctk.CTkLabel(r, text=s).pack(side="left")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=s: self.remove_software(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove software")
         for p in self.data.get("app_state_paths", []):
             r = ctk.CTkFrame(self.scroll_app_state, fg_color="transparent"); r.pack(fill="x")
             ctk.CTkLabel(r, text=p).pack(side="left")
-            ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_app_state_path(x)).pack(side="right")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_app_state_path(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove app state")
 
     def add_path(self):
         p=self.entry_path.get().strip()
@@ -1298,6 +1338,7 @@ class ProjectManagerApp(ctk.CTk):
         # Menu Button (Settings/Quit)
         self.menu_btn = ctk.CTkButton(header, text="", image=self.icons.get("settings"), width=40, height=40, corner_radius=20, command=self.show_menu)
         self.menu_btn.pack(side="right", padx=10)
+        ToolTip(self.menu_btn, "Settings & Menu")
 
         # 2. Main List
         self.project_list = ctk.CTkScrollableFrame(self)
