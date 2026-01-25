@@ -562,10 +562,13 @@ def save_registry(registry: Dict[str, str]) -> None:
 def compute_registry() -> Dict[str, str]:
     with _registry_lock:
         os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
-        local_folders = {
-            f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
-            if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
-        }
+        local_folders = set()
+        # Optimization: Use os.scandir to avoid multiple system calls for isdir checks
+        with os.scandir(LOCAL_WORKSPACE_ROOT) as it:
+            for entry in it:
+                if entry.is_dir():
+                    local_folders.add(entry.name)
+
         registry = load_registry()
         original_registry = registry.copy()
 
