@@ -24,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.6.0"
+VERSION = "4.7.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -46,6 +46,17 @@ CLOUD_REGISTRY_FILENAME = "project_registry.json"
 LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 
 load_dotenv(ENV_PATH)
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read integer env var with safe fallback for blank/invalid values."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def save_env_setting(key: str, value: str) -> None:
@@ -78,8 +89,8 @@ def save_env_setting(key: str, value: str) -> None:
 
 REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
 REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
-REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
-IDE_PORT = int(os.getenv("IDE_PORT", "8766"))
+REMOTE_PORT = _int_env("REMOTE_PORT", 8765)
+IDE_PORT = _int_env("IDE_PORT", 8766)
 REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")  # Will be fetched from Firebase
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
 REMOTE_DEFAULT_CWD = os.getenv("REMOTE_DEFAULT_CWD", BASE_DIR)
@@ -772,14 +783,24 @@ async def start_ide_proxy_session(loop: asyncio.AbstractEventLoop, ws: WebSocket
     async def relay():
         try:
             async for msg in ide_ws:
-                data = json.loads(msg)
-                if data.get("type") == "started":
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    await ws.send_text(msg)
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "started":
                     session.ide_session_id = data.get("sessionId")
-                
-                # Relay to client
-                await ws.send_text(msg)
-                
-                if data.get("type") == "exit":
+                    # Agent already emitted a "started" with its own sessionId.
+                    continue
+
+                if "sessionId" in data:
+                    data["sessionId"] = session_id
+
+                await ws.send_text(json.dumps(data))
+
+                if msg_type == "exit":
                     break
         except Exception:
             pass

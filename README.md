@@ -7,19 +7,19 @@ Omni Project Remote allows you to control your workstation from your phone using
 1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
 2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
-## ?? Downloads (v4.6.0)
+## ?? Downloads (v4.7.0)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
-| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.6.0/OmniProjectRemote.apk) | Mobile Client |
-| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.6.0/AndroidStudioPlugin.zip) | **Includes Host Mode** |
-| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.6.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
-| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.6.0/OmniProjectSync.exe) | Main GUI (No-install) |
+| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.0/OmniProjectRemote.apk) | Mobile Client |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.0/AndroidStudioPlugin.zip) | **Includes Host Mode** |
+| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
+| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.0/OmniProjectSync.exe) | Main GUI (No-install) |
 
-## What's new in 4.6.0
-- Auto-publishes the Cloudflare tunnel host to Firebase (and saves it to `secrets.env` as `REMOTE_PUBLIC_HOST` / `REMOTE_TUNNEL_URL`).
-- New **Installed Apps** manager in the Sync UI to map installed programs to projects and auto-uninstall when unused.
-- Sync UI launches the packaged EXE by default (use `USE_PYTHON=1` to run from source).
+## What's new in 4.7.0
+- **Unified Terminal Routing**: Android terminal now connects to OmniProjectSync by default and can switch into open Android Studio terminal tabs via the plugin.
+- **Plugin Auto-Login + Auto-Host**: IDE plugin restores Firebase login and auto-starts the host after restart (securely stored in PasswordSafe).
+- **Safer Defaults**: Blank ports auto-default to 8765/8766 instead of crashing the agent.
 
 ## Quick Start
 

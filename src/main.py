@@ -22,7 +22,7 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.6.0"
+VERSION = "4.7.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
@@ -772,6 +772,13 @@ class SettingsWindow(ctk.CTkToplevel):
         settings = {k: e.get().strip() for k, e in self.entries.items()}
         settings["APPEARANCE_MODE"] = self.mode_var.get()
         settings["UI_THEME"] = self.theme_var.get()
+        # Ensure required numeric settings have safe defaults when left blank.
+        if not settings.get("REMOTE_PORT"):
+            settings["REMOTE_PORT"] = "8765"
+            entry = self.entries.get("REMOTE_PORT")
+            if entry:
+                entry.delete(0, "end")
+                entry.insert(0, settings["REMOTE_PORT"])
         
         # Merge with existing env file to preserve comments/other vars
         existing = {}
@@ -953,18 +960,35 @@ class ProjectCard(ctk.CTkFrame):
     def _populate_controls(self):
         # Re-create buttons every time to ensure fresh state/bindings
         if self.status == "Local":
-            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), "gray", icon=self.app.icons.get("folder"))
-            self._btn("Studio", lambda: self.app.open_studio(self.name), "#3DDC84", "black", icon=self.app.icons.get("android_studio"))
-            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), "#9333ea", icon=self.app.icons.get("antigravity"))
-            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), "#64748b", icon=self.app.icons.get("config_cog"))
-            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), "#ef4444", icon=self.app.icons.get("cloud"))
+            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), color="gray", icon=self.app.icons.get("folder"))
+            self._btn("Studio", lambda: self.app.open_studio(self.name), color="#3DDC84", text_color="black", icon=self.app.icons.get("android_studio"))
+            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), color="#9333ea", icon=self.app.icons.get("antigravity"))
+            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), color="#64748b", icon=self.app.icons.get("config_cog"))
+            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), color="#ef4444", icon=self.app.icons.get("cloud"))
         else:
-            self._btn("Activate", lambda: self.app.activate_project(self.name), "#3b82f6", icon=self.app.icons.get("activate"))
-            self._btn("Forget", lambda: self.app.forget_project(self.name), "transparent", "red", border=1, icon=self.app.icons.get("quit"))
+            self._btn("Activate", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"))
+            self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"))
 
-    def _btn(self, txt, cmd, bg="transparent", fg="white", border=0, icon=None):
-        btn = ctk.CTkButton(self.controls, text=txt, image=icon, command=cmd, fg_color=bg, text_color=fg, border_width=border or 1, height=30, corner_radius=15)
-        btn.pack(fill="x", pady=2)
+    def _btn(self, txt, cmd, color=None, text_color=None, icon=None):
+        # Glassy Pill Style
+        accent = color if color and color != "transparent" else "gray50"
+        
+        if color == "transparent":
+             fg = "transparent"
+             border = "gray40"
+             hover = "gray60"
+             text_col = text_color if text_color else ("black", "white")
+        else:
+             fg = ("gray90", "gray20") # Glassy base
+             border = accent
+             hover = accent
+             text_col = text_color if text_color else ("black", "white")
+
+        btn = ctk.CTkButton(self.controls, text=txt, image=icon, command=cmd, 
+                            fg_color=fg, border_color=border, border_width=2,
+                            hover_color=hover, text_color=text_col,
+                            height=35, corner_radius=17)
+        btn.pack(fill="x", pady=3, padx=5)
         if self.busy:
             btn.configure(state="disabled")
 
@@ -1336,14 +1360,15 @@ class ProjectManagerApp(ctk.CTk):
         ctk.CTkLabel(header, text=APP_NAME, font=("", 16, "bold")).pack(side="left", padx=15, pady=10)    
 
         # Menu Button (Settings/Quit)
-        self.menu_btn = ctk.CTkButton(header, text="", image=self.icons.get("settings"), width=40, height=40, corner_radius=20, command=self.show_menu)
-        self.menu_btn.pack(side="right", padx=10)
+        self.menu_btn = ctk.CTkButton(header, text="", image=self.icons.get("settings"), width=30, height=30, corner_radius=0, fg_color="transparent", hover_color=("gray75", "gray25"), command=self.show_menu)
+        self.menu_btn.pack(side="right", padx=15)
         ToolTip(self.menu_btn, "Settings & Menu")
 
         # 2. Main List
         self.project_list = ctk.CTkScrollableFrame(self)
         self.project_list.pack(fill="both", expand=True, padx=5, pady=5)
         self.project_cards = {}
+        self.category_frames = {}
 
         # 3. Footer
         footer = ctk.CTkFrame(self, fg_color="transparent")
@@ -1362,6 +1387,51 @@ class ProjectManagerApp(ctk.CTk):
         self.progress_bar = ctk.CTkProgressBar(footer, height=10, progress_color="#22c55e")
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=(5,0))
+
+    def _load_categories(self):
+        path = os.path.join(CONFIG_DIR, "categories.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def _save_categories(self, data):
+        path = os.path.join(CONFIG_DIR, "categories.json")
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=4)
+        except:
+            pass
+
+    def _get_project_category(self, project_name):
+        cats = self._load_categories()
+        # Data structure: {"CategoryName": ["proj1", "proj2"], ...}
+        for cat, projects in cats.items():
+            if project_name in projects:
+                return cat
+        return "Uncategorized"
+
+    def _set_project_category(self, project_name, new_category):
+        cats = self._load_categories()
+        # Remove from old
+        for cat in cats:
+            if project_name in cats[cat]:
+                cats[cat].remove(project_name)
+        
+        # Add to new
+        if new_category not in cats:
+            cats[new_category] = []
+        if project_name not in cats[new_category]:
+            cats[new_category].append(project_name)
+        
+        # Cleanup empty
+        clean_cats = {k: v for k, v in cats.items() if v or k == new_category}
+        self._save_categories(clean_cats)
+        self._refresh_projects()
+
 
     def show_menu(self):
         menu_items = [
@@ -1759,6 +1829,7 @@ class ProjectManagerApp(ctk.CTk):
     
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
+        self.category_frames = {}
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
@@ -1779,36 +1850,77 @@ class ProjectManagerApp(ctk.CTk):
 
         # 3. Build Registry
         registry = {}
-        # Start with what's in the saved registry files
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
-
-        # Merge in actual folders found
-        for f in local_folders:
-            registry[f] = "Local"
-        
+        for f in local_folders: registry[f] = "Local"
         for f in cloud_folders:
-            # If not already Local, it's Cloud
-            if registry.get(f) != "Local":
-                registry[f] = "Cloud"
-
-        # Cleanup registry: if it's in registry but doesn't exist in either place, remove it
-        # (Or keep it as 'Cloud' if you expect it might come back, but let's be clean)
-        for name in list(registry.keys()):
-            if name not in local_folders and name not in cloud_folders:
-                # If it's not local and not in drive, it's effectively "Forgotten" unless manually added
-                # But for now, let's keep everything found in the scan.
-                pass
+            if registry.get(f) != "Local": registry[f] = "Cloud"
 
         self._save_reg(registry)
 
+        # 4. Group by Category
+        categories = self._load_categories()
+        grouped = {"Uncategorized": []}
+        for cat in categories: grouped[cat] = []
+
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
-            status = registry[name]
-            # Create Card
-            card = ProjectCard(self.project_list, self, name, status)
-            self.project_cards[name] = card
+            cat = self._get_project_category(name)
+            if cat not in grouped: grouped[cat] = []
+            grouped[cat].append((name, registry[name]))
+
+        # 5. Render
+        # Sort categories: user defined first (alpha), then Uncategorized
+        cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
+        if grouped["Uncategorized"]: cat_names.append("Uncategorized")
+
+        for cat in cat_names:
+            projects = grouped[cat]
+            if not projects and cat == "Uncategorized": continue
+            
+            # Category Header/Container
+            # If Uncategorized is empty, skip. If others empty, show (to allow dragging in? or just show empty)
+            # For now, show.
+            
+            frame = CollapsibleFrame(self.project_list, title=f"{cat} ({len(projects)})")
+            frame.pack(fill="x", pady=5)
+            frame.toggle() # Expand by default
+            self.category_frames[cat] = frame
+
+            # Add "Add Category" or "Rename" buttons to header? maybe later.
+            
+            for name, status in projects:
+                card = ProjectCard(frame.content, self, name, status)
+                self.project_cards[name] = card
+                # Bind right click for category move
+                card.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                card.header.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                if hasattr(card, "lbl"):
+                    card.lbl.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+
         self.sync_to_firestore()
+
+    def _show_category_menu(self, event, project_name):
+        menu_items = []
+        current_cat = self._get_project_category(project_name)
+        
+        # Existing categories
+        cats = sorted(list(self._load_categories().keys()))
+        if "Uncategorized" not in cats: cats.append("Uncategorized")
+        
+        for cat in cats:
+            if cat == current_cat: continue
+            menu_items.append((f"Move to {cat}", lambda c=cat: self._set_project_category(project_name, c), "transparent", ("black", "white")))
+            
+        menu_items.append(("New Category...", lambda: self._prompt_new_category(project_name), "#3b82f6", "white"))
+        
+        PopupMenu(self, event.widget, menu_items)
+
+    def _prompt_new_category(self, project_name):
+        dialog = ctk.CTkInputDialog(text="Enter new category name:", title="New Category")
+        new_cat = dialog.get_input()
+        if new_cat:
+            self._set_project_category(project_name, new_cat.strip())
 
 
     def deactivate_project(self, name):
