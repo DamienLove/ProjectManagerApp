@@ -89,6 +89,11 @@ LOCAL_WORKSPACE_ROOT = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
 DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]   
 
+# Performance Optimization: Pre-calculate absolute paths
+ABS_LOCAL_WORKSPACE_ROOT = os.path.abspath(LOCAL_WORKSPACE_ROOT)
+ABS_REMOTE_ALLOWED_ROOTS = [os.path.abspath(p) for p in REMOTE_ALLOWED_ROOTS]
+ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
+
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
 
@@ -469,6 +474,8 @@ _project_locks_lock = threading.Lock()
 _project_locks: Dict[str, threading.Lock] = {}
 
 _registry_lock = threading.Lock()
+_registry_cache: Optional[Dict[str, str]] = None
+_registry_mtime: float = 0.0
 
 
 def log(msg: str) -> None:
@@ -509,36 +516,48 @@ def is_path_safe(path: str) -> bool:
         return False
     abs_path = os.path.abspath(path)
     # Always allow the workspace root and its children.
-    ws_root = os.path.abspath(LOCAL_WORKSPACE_ROOT)
-    if abs_path == ws_root or abs_path.startswith(ws_root + os.sep):
+    if abs_path == ABS_LOCAL_WORKSPACE_ROOT or abs_path.startswith(ABS_LOCAL_WORKSPACE_ROOT + os.sep):
         return True
     # If allowed roots are defined, enforce them.
-    if REMOTE_ALLOWED_ROOTS:
-        for root in REMOTE_ALLOWED_ROOTS:
-            root_abs = os.path.abspath(root)
+    if ABS_REMOTE_ALLOWED_ROOTS:
+        for root_abs in ABS_REMOTE_ALLOWED_ROOTS:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
         return False
     # Otherwise block only obviously dangerous roots.
-    for p in PROTECTED_PATHS:
-        p_abs = os.path.abspath(p)
+    for p_abs in ABS_PROTECTED_PATHS:
         if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
             return False
     return True
 
 def load_registry() -> Dict[str, str]:
-    if os.path.exists(LOCAL_REGISTRY_PATH):
-        try:
-            with open(LOCAL_REGISTRY_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    global _registry_cache, _registry_mtime
+    if not os.path.exists(LOCAL_REGISTRY_PATH):
+        return {}
+    try:
+        mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+        if _registry_cache is not None and mtime == _registry_mtime:
+            return _registry_cache.copy()
+
+        with open(LOCAL_REGISTRY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _registry_cache = data
+            _registry_mtime = mtime
+            return data.copy()
+    except Exception:
+        return {}
 
 def save_registry(registry: Dict[str, str]) -> None:
+    global _registry_cache, _registry_mtime
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(LOCAL_REGISTRY_PATH, "w", encoding="utf-8") as f:
         json.dump(registry, f, indent=2)
+
+    _registry_cache = registry.copy()
+    try:
+        _registry_mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
+    except Exception:
+        _registry_mtime = 0.0
 
 def compute_registry() -> Dict[str, str]:
     with _registry_lock:
@@ -548,12 +567,16 @@ def compute_registry() -> Dict[str, str]:
             if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
         }
         registry = load_registry()
+        original_registry = registry.copy()
+
         for name in local_folders:
             registry[name] = "Local"
         for name in list(registry.keys()):
             if name not in local_folders:
                 registry[name] = "Cloud"
-        save_registry(registry)
+
+        if registry != original_registry:
+            save_registry(registry)
         return registry
 
 def force_remove_readonly(func, path, excinfo):
@@ -887,7 +910,7 @@ async def api_activate_project(name: str, request: Request):
     result = await loop.run_in_executor(None, activate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -897,7 +920,7 @@ async def api_deactivate_project(name: str, request: Request):
     result = await run_in_threadpool(deactivate_project, name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -907,7 +930,7 @@ async def api_open_studio_project(name: str, request: Request):
     result = open_studio_project(name)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("message"))
-    sync_to_firestore()
+    await run_in_threadpool(sync_to_firestore)
     return result
 
 
@@ -930,8 +953,6 @@ async def api_command(request: Request):
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        stdout_str = stdout.decode("utf-8", errors="replace")
-        stderr_str = stderr.decode("utf-8", errors="replace")
         stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
         stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
 
