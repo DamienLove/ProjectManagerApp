@@ -7,4 +7,7 @@ reviews:
     drafts: true
     ignore_title_keywords: []
     labels: []
+    # Explicitly allow CodeRabbit to review PRs from this author by keeping them out of ignore_usernames.
+    # allowed_usernames:
+    #   - google-labs-jules
     ignore_usernames: []
