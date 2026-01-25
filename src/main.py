@@ -53,8 +53,9 @@ PORTABLE_MODE_ENV = "PORTABLE_MODE"
 PORTABLE_ROOT_ENV = "PORTABLE_ROOT"
 PORTABLE_AUTO_CLEAN_ENV = "PORTABLE_AUTO_CLEANUP"
 
-ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("blue")
+load_dotenv(ENV_PATH)
+ctk.set_appearance_mode(os.getenv("APPEARANCE_MODE", "Dark"))
+ctk.set_default_color_theme(os.getenv("UI_THEME", "blue"))
 
 # Hidden projects list (loaded from env, used by sync_to_firestore)
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
@@ -219,14 +220,21 @@ class LoginWindow(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
         self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
         self.password_entry.pack(fill="x", padx=20)
+        self.show_password_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            self,
+            text="Show password",
+            variable=self.show_password_var,
+            command=self._toggle_password_visibility,
+        ).pack(pady=(6, 0), padx=20, anchor="w")
 
         self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
         self.status_lbl.pack(pady=(5,0))
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, command=self.login).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
 
@@ -311,6 +319,9 @@ class LoginWindow(ctk.CTkToplevel):
         except Exception as e:
             self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
 
+    def _toggle_password_visibility(self):
+        self.password_entry.configure(show="" if self.show_password_var.get() else "*")
+
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
@@ -320,7 +331,7 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.is_scanning = True
         ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
-        self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=40)
+        self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=45, corner_radius=22)
         self.btn_confirm.pack(fill="x", padx=20, pady=10)
         threading.Thread(target=self._scan, daemon=True).start()
     def _scan(self):
@@ -503,16 +514,16 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         self.scroll_files = ctk.CTkScrollableFrame(tf); self.scroll_files.pack(fill="both", expand=True)  
         f_add = ctk.CTkFrame(tf); f_add.pack(fill="x", pady=5)
         self.entry_path = ctk.CTkEntry(f_add, placeholder_text="C:\\Path\\To\\External\\Folder"); self.entry_path.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(f_add, text="Add", width=80, command=self.add_path).pack(side="right")
+        ctk.CTkButton(f_add, text="Add", width=80, height=32, corner_radius=16, command=self.add_path).pack(side="right")
         self.scroll_soft = ctk.CTkScrollableFrame(ts); self.scroll_soft.pack(fill="both", expand=True)    
         s_add = ctk.CTkFrame(ts); s_add.pack(fill="x", pady=5)
         self.entry_soft = ctk.CTkEntry(s_add, placeholder_text="Software ID..."); self.entry_soft.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(s_add, text="Browse", width=80, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
-        ctk.CTkButton(s_add, text="Add ID", width=80, command=self.add_software_id).pack(side="right")    
+        ctk.CTkButton(s_add, text="Browse", width=80, height=32, corner_radius=16, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
+        ctk.CTkButton(s_add, text="Add ID", width=80, height=32, corner_radius=16, command=self.add_software_id).pack(side="right")    
         self.scroll_app_state = ctk.CTkScrollableFrame(ta); self.scroll_app_state.pack(fill="both", expand=True)
         a_add = ctk.CTkFrame(ta); a_add.pack(fill="x", pady=5)
         self.entry_app_state_path = ctk.CTkEntry(a_add, placeholder_text="C:\\Users\\...\\AppData\\Roaming\\..._profile"); self.entry_app_state_path.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(a_add, text="Add", width=80, command=self.add_app_state_path).pack(side="right")    
+        ctk.CTkButton(a_add, text="Add", width=80, height=32, corner_radius=16, command=self.add_app_state_path).pack(side="right")    
 
     def _load_manifest(self):
         if os.path.exists(self.manifest_path):
@@ -564,69 +575,86 @@ class ProjectConfigWindow(ctk.CTkToplevel):
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, env):
-        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x750"); self.entries={}
+        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x850"); self.entries={}
+        
+        # Appearance Section
+        self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        ctk.CTkLabel(self.scroll, text="Appearance", font=("", 14, "bold")).pack(anchor="w", pady=(0,5))
+        
+        # Theme Choice
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Appearance Mode", width=200, anchor="w").pack(side="left")
+        self.mode_var = ctk.StringVar(value=ctk.get_appearance_mode())
+        self.mode_menu = ctk.CTkOptionMenu(f, values=["Dark", "Light", "System"], variable=self.mode_var, command=self._change_appearance_mode)
+        self.mode_menu.pack(side="left", fill="x", expand=True)
+
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Color Theme", width=200, anchor="w").pack(side="left")
+        self.theme_var = ctk.StringVar(value=os.getenv("UI_THEME", "blue"))
+        self.theme_menu = ctk.CTkOptionMenu(f, values=["blue", "green", "dark-blue"], variable=self.theme_var, command=self._change_color_theme)
+        self.theme_menu.pack(side="left", fill="x", expand=True)
+
         self.fields = [
             ("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"),
             ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"),
             ("GitHub Token","GITHUB_TOKEN"),
-            ("Hidden Projects","HIDDEN_PROJECTS"),
+            ("Hidden Projects","HIDDEN_PROJECTS")
+        ]
+        
+        self.advanced_fields = [
             ("Firebase Project ID", "FIREBASE_PROJECT_ID"),
             ("Firebase Doc Path", "FIREBASE_DOCUMENT_PATH"),
-            ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS")
-        ]
-        self.remote_fields = [
+            ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS"),
             ("Remote Access Token", "REMOTE_ACCESS_TOKEN"),
             ("Public Host (for Android)", "REMOTE_PUBLIC_HOST"),
             ("Bind Host", "REMOTE_BIND_HOST"),
-            ("Remote Port", "REMOTE_PORT"),
+            ("Remote Port", "REMOTE_PORT")
         ]
-        self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         # General settings section
-        ctk.CTkLabel(self.scroll, text="General Settings", font=("", 14, "bold")).pack(anchor="w", pady=(0,5))
+        ctk.CTkLabel(self.scroll, text="General Settings", font=("", 14, "bold")).pack(anchor="w", pady=(20,5))
         for l,k in self.fields:
             f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5); ctk.CTkLabel(f, text=l, width=200, anchor="w").pack(side="left")
             e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
 
-        # Remote Agent section
-        ctk.CTkLabel(self.scroll, text="Remote Agent (Android)", font=("", 14, "bold")).pack(anchor="w", pady=(20,5))
+        # Advanced Section (Collapsible)
+        self.adv_container = CollapsibleFrame(self.scroll, title="Advanced / Automation Settings")
+        self.adv_container.pack(fill="x", pady=10)
+        
+        # Remote Agent section within Advanced
+        ctk.CTkLabel(self.adv_container.content, text="Remote Agent & Cloud Config", font=("", 12, "bold")).pack(anchor="w", pady=(5,5))
 
-        # Token field with generate button
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Remote Access Token", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f, show="*"); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_ACCESS_TOKEN"]=e
-        ctk.CTkButton(f, text="Generate", width=80, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(5,0))
+        for l,k in self.advanced_fields:
+            f=ctk.CTkFrame(self.adv_container.content, fg_color="transparent"); f.pack(fill="x", pady=2)
+            ctk.CTkLabel(f, text=l, width=180, anchor="w", font=("", 11)).pack(side="left")
+            e=ctk.CTkEntry(f, font=("", 11)); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
+            
+            # Special buttons for specific advanced fields
+            if k == "REMOTE_ACCESS_TOKEN":
+                ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(2,0))
+            elif k == "REMOTE_PUBLIC_HOST":
+                ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(2,0))
+                ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(2,0))
 
-        # Public host field with auto-detect buttons
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Public Host (Android)", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PUBLIC_HOST"]=e
-        ctk.CTkButton(f, text="Tunnel", width=70, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(5,0))
-        ctk.CTkButton(f, text="LAN", width=50, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(5,0))
-
-        # Bind host
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Bind Host", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_BIND_HOST"]=e
-        e.insert(0, "127.0.0.1")  # Default
-
-        # Port
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Remote Port", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PORT"]=e
-        e.insert(0, "8765")  # Default
-
-        # Help text
-        help_text = """Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.
-LAN IP only works on same network. 127.0.0.1 will NOT work!"""
-        ctk.CTkLabel(self.scroll, text=help_text, text_color="#f97316", font=("", 11)).pack(anchor="w", pady=(5,10))
+        # Help text in advanced
+        help_text = "Use Gen to create a secure token. Tun/LAN to auto-detect hosts.\nThese settings are usually managed automatically."
+        ctk.CTkLabel(self.adv_container.content, text=help_text, text_color="gray", font=("", 10)).pack(anchor="w", pady=(5,10))
 
         # Restart agent checkbox
         self.restart_agent_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(self.scroll, text="Restart remote agent after save", variable=self.restart_agent_var).pack(anchor="w", pady=5)
 
-        ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=40).pack(fill="x", padx=20, pady=20)
+        ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=45, corner_radius=22).pack(fill="x", padx=20, pady=20)
         self.load()
+
+    def _change_appearance_mode(self, new_mode):
+        ctk.set_appearance_mode(new_mode)
+
+    def _change_color_theme(self, new_theme):
+        # Note: changing theme at runtime is limited in ctk without restart for some elements,
+        # but we save it for next launch.
+        pass
 
     def _generate_token(self):
         import secrets as sec
@@ -685,15 +713,41 @@ LAN IP only works on same network. 127.0.0.1 will NOT work!"""
     def load(self):
         if os.path.exists(self.env):
             with open(self.env) as f:
-                d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in f if "=" in l and not l.startswith("#")}
-                all_fields = self.fields + self.remote_fields
-                for l,k in all_fields:
+                # Read env file, handling potential encoding/null byte issues
+                raw = f.read().replace('\0', '')
+                d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in raw.splitlines() if "=" in l and not l.startswith("#")}
+                
+                all_keys = [k for _,k in self.fields] + [k for _,k in self.advanced_fields]
+                for k in all_keys:
                     if k in self.entries:
                         self.entries[k].delete(0, "end")
                         self.entries[k].insert(0, d.get(k,""))
+                
+                # Load theme settings
+                self.mode_var.set(d.get("APPEARANCE_MODE", ctk.get_appearance_mode()))
+                self.theme_var.set(d.get("UI_THEME", "blue"))
+                ctk.set_appearance_mode(self.mode_var.get())
 
     def save(self):
-        with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
+        settings = {k: e.get().strip() for k, e in self.entries.items()}
+        settings["APPEARANCE_MODE"] = self.mode_var.get()
+        settings["UI_THEME"] = self.theme_var.get()
+        
+        # Merge with existing env file to preserve comments/other vars
+        existing = {}
+        if os.path.exists(self.env):
+            with open(self.env, "r") as f:
+                for line in f:
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.split("=", 1)
+                        existing[k.strip()] = v.strip()
+        
+        existing.update(settings)
+        
+        with open(self.env, "w") as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
+                
         load_dotenv(self.env, override=True)
         if hasattr(self.parent, '_sync_settings_to_cloud'):
             self.parent._sync_settings_to_cloud()
@@ -721,11 +775,12 @@ class PopupMenu(ctk.CTkToplevel):
         self.frame.pack(fill="both", expand=True)
 
         for item in menu_items:
-            # item format: (text, command, fg_color, text_color)
+            # item format: (text, command, fg_color, text_color, image)
             text = item[0]
             cmd = item[1]
             fg = item[2] if len(item) > 2 else "transparent"
             tc = item[3] if len(item) > 3 else ("black", "white")
+            img = item[4] if len(item) > 4 else None
 
             # Hover color logic
             hover = ("#e5e7eb", "#374151") if fg == "transparent" else None
@@ -733,6 +788,7 @@ class PopupMenu(ctk.CTkToplevel):
             btn = ctk.CTkButton(
                 self.frame,
                 text=text,
+                image=img,
                 command=lambda c=cmd: self._invoke(c),
                 fg_color=fg,
                 text_color=tc,
@@ -857,17 +913,17 @@ class ProjectCard(ctk.CTkFrame):
     def _populate_controls(self):
         # Re-create buttons every time to ensure fresh state/bindings
         if self.status == "Local":
-            self._btn("📂 Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), "gray")
-            self._btn("🤖 Studio", lambda: self.app.open_studio(self.name), "#3DDC84", "black")
-            self._btn("🌌 AntiG", lambda: self.app.open_antigravity(self.name), "#9333ea")
-            self._btn("⚙️ Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), "#64748b")
-            self._btn("☁️ Deactivate", lambda: self.app.deactivate_project(self.name), "#ef4444")
+            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), "gray", icon=self.app.icons.get("folder"))
+            self._btn("Studio", lambda: self.app.open_studio(self.name), "#3DDC84", "black", icon=self.app.icons.get("android_studio"))
+            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), "#9333ea", icon=self.app.icons.get("antigravity"))
+            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), "#64748b", icon=self.app.icons.get("config_cog"))
+            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), "#ef4444", icon=self.app.icons.get("cloud"))
         else:
-            self._btn("🚀 Activate", lambda: self.app.activate_project(self.name), "#3b82f6")
-            self._btn("❌ Forget", lambda: self.app.forget_project(self.name), "transparent", "red", border=1)
+            self._btn("Activate", lambda: self.app.activate_project(self.name), "#3b82f6", icon=self.app.icons.get("activate"))
+            self._btn("Forget", lambda: self.app.forget_project(self.name), "transparent", "red", border=1, icon=self.app.icons.get("quit"))
 
-    def _btn(self, txt, cmd, bg="transparent", fg="white", border=0):
-        btn = ctk.CTkButton(self.controls, text=txt, command=cmd, fg_color=bg, text_color=fg, border_width=border, height=25)
+    def _btn(self, txt, cmd, bg="transparent", fg="white", border=0, icon=None):
+        btn = ctk.CTkButton(self.controls, text=txt, image=icon, command=cmd, fg_color=bg, text_color=fg, border_width=border or 1, height=30, corner_radius=15)
         btn.pack(fill="x", pady=2)
         if self.busy:
             btn.configure(state="disabled")
@@ -897,6 +953,19 @@ class ProjectCard(ctk.CTkFrame):
         self.lbl.bind("<Button-1>", self.toggle)
 
 class ProjectManagerApp(ctk.CTk):
+    def _load_icons(self):
+        self.icons = {}
+        icon_names = ["antigravity", "android_studio", "config_cog", "cloud", "activate", "settings", "apps", "export", "quit", "folder"]
+        for name in icon_names:
+            path = os.path.join(ASSET_PATH, f"{name}.png")
+            if os.path.exists(path):
+                try:
+                    img = Image.open(path)
+                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(20, 20))
+                except Exception:
+                    self.icons[name] = None
+            else:
+                self.icons[name] = None
 
     def _init_firebase(self):
         self.db = None
@@ -1018,14 +1087,21 @@ class ProjectManagerApp(ctk.CTk):
         ctk.CTkLabel(self.login_frame, text="Password").pack(pady=(10, 0))
         self.login_password_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Enter your password", show="*")
         self.login_password_entry.pack(fill="x", padx=10)
+        self.login_show_password_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            self.login_frame,
+            text="Show password",
+            variable=self.login_show_password_var,
+            command=self._toggle_inline_password_visibility,
+        ).pack(pady=(6, 0), padx=10, anchor="w")
 
         self.login_status_lbl = ctk.CTkLabel(self.login_frame, text="", text_color="red", font=("", 10))
         self.login_status_lbl.pack(pady=(5, 0))
 
         btn_row = ctk.CTkFrame(self.login_frame, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, command=self._login_inline).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self._register_inline).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline).pack(side="left", padx=5)
 
         ctk.CTkButton(self.login_frame, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self._reset_inline).pack(pady=5)
 
@@ -1102,6 +1178,11 @@ class ProjectManagerApp(ctk.CTk):
         except Exception as e:
             self.login_status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
 
+    def _toggle_inline_password_visibility(self):
+        self.login_password_entry.configure(
+            show="" if self.login_show_password_var.get() else "*"
+        )
+
     def __init__(self):
         super().__init__()
         log_startup("ProjectManagerApp init started")
@@ -1171,10 +1252,17 @@ class ProjectManagerApp(ctk.CTk):
             while True:
                 task = self.queue.get_nowait()
                 if task == "deiconify":
-                    self.deiconify()
-                    bring_to_front(self)
+                    if getattr(self, "login_window", None) and self.login_window.winfo_exists():
+                        try:
+                            self.login_window.deiconify()
+                            bring_to_front(self.login_window, self)
+                        except Exception:
+                            pass
+                    else:
+                        self.deiconify()
+                        bring_to_front(self)
                 elif task == "quit":
-                    self.on_close()
+                    self.exit_app()
         except queue.Empty:
             pass
         self.after(200, self._check_queue)
@@ -1191,6 +1279,7 @@ class ProjectManagerApp(ctk.CTk):
             except Exception:
                 pass
         self.deiconify() # Show main window
+        self._load_icons()
         self._init_compact_ui()
         self._start_tray_icon()
         self._start_remote_agent()
@@ -1207,7 +1296,7 @@ class ProjectManagerApp(ctk.CTk):
         ctk.CTkLabel(header, text=APP_NAME, font=("", 16, "bold")).pack(side="left", padx=15, pady=10)    
 
         # Menu Button (Settings/Quit)
-        self.menu_btn = ctk.CTkButton(header, text="☰", width=40, command=self.show_menu)
+        self.menu_btn = ctk.CTkButton(header, text="", image=self.icons.get("settings"), width=40, height=40, corner_radius=20, command=self.show_menu)
         self.menu_btn.pack(side="right", padx=10)
 
         # 2. Main List
@@ -1219,13 +1308,13 @@ class ProjectManagerApp(ctk.CTk):
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", side="bottom", padx=5, pady=5)
 
-        ctk.CTkButton(footer, text="➕ New Project", command=self.show_new_project).pack(fill="x", pady=2)
+        ctk.CTkButton(footer, text=" New Project", image=self.icons.get("activate"), height=45, corner_radius=22, command=self.show_new_project).pack(fill="x", pady=2)
 
         # Activity Log (Collapsible)
         self.log_container = CollapsibleFrame(footer, title="Activity Log")
         self.log_container.pack(fill="x", pady=2)
 
-        self.log_box = ctk.CTkTextbox(self.log_container.content, height=100, font=("Consolas", 10))      
+        self.log_box = ctk.CTkTextbox(self.log_container.content, height=250, font=("Consolas", 10))      
         self.log_box.pack(fill="x", padx=2, pady=2)
         self.log_box.configure(state="disabled")
 
@@ -1235,16 +1324,16 @@ class ProjectManagerApp(ctk.CTk):
 
     def show_menu(self):
         menu_items = [
-            ("⚙️ Settings", lambda: SettingsWindow(self, ENV_PATH)),
-            ("🧩 Installed Apps", lambda: InstalledAppsWindow(self)),
-            ("📦 Export Launcher", self.export_portable_bundle),
-            ("☁️ Deactivate All", self.deactivate_all_projects),
+            ("Settings", lambda: SettingsWindow(self, ENV_PATH), "transparent", ("black", "white"), self.icons.get("settings")),
+            ("Installed Apps", lambda: InstalledAppsWindow(self), "transparent", ("black", "white"), self.icons.get("apps")),
+            ("Export Launcher", self.export_portable_bundle, "transparent", ("black", "white"), self.icons.get("export")),
+            ("Deactivate All", self.deactivate_all_projects, "transparent", ("black", "white"), self.icons.get("cloud")),
         ]
 
         if self._is_portable_mode():
-            menu_items.append(("🧹 Deactivate + Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black"))
+            menu_items.append(("Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black", self.icons.get("quit")))
 
-        menu_items.append(("🚪 Quit", self.on_close, "red", "white"))
+        menu_items.append(("Quit", self.on_close, "red", "white", self.icons.get("quit")))
 
         PopupMenu(self, self.menu_btn, menu_items)
 
@@ -1624,7 +1713,7 @@ class ProjectManagerApp(ctk.CTk):
 
         if quit_after:
             # Adding a small delay to ensure the cleanup script has time to be created
-            self.after(1000, self.on_close)
+            self.after(1000, self.exit_app)
 
     
     def _refresh_projects(self):
@@ -1969,13 +2058,18 @@ class ProjectManagerApp(ctk.CTk):
     def _run_agent_worker(self, agent_cmd):
         try:
             import subprocess
-            # Start the agent as a subprocess
+            # Start the agent as a subprocess with no window on Windows
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+                
             self.agent_process = subprocess.Popen(
                 agent_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                creationflags=creationflags
             )
             # Log output in real-time
             for line in self.agent_process.stdout:
@@ -2003,18 +2097,41 @@ class ProjectManagerApp(ctk.CTk):
         self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled")
 
     def on_close(self):
+        self._minimize_to_tray()
+
+    def _minimize_to_tray(self):
+        if not self.tray_icon:
+            self._start_tray_icon()
+        try:
+            if getattr(self, "login_window", None) and self.login_window.winfo_exists():
+                self.login_window.withdraw()
+        except Exception:
+            pass
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+
+    def exit_app(self):
         if os.getenv(PORTABLE_AUTO_CLEAN_ENV, "").strip() == "1":
             self._schedule_self_cleanup()
-        if self.tray_icon: self.tray_icon.stop()
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+            self.tray_icon = None
         self.quit()
 
     def _start_tray_icon(self):
+        if self.tray_icon:
+            return
         try:
             img = Image.open(ICON_PATH)
             items = [pystray.MenuItem("Show", lambda i, it: self.queue.put("deiconify"))]
             if self._is_portable_mode():
                 items.append(pystray.MenuItem("Deactivate + Cleanup", lambda i, it: self.deactivate_all_projects(cleanup=True, quit_after=True)))
-            items.append(pystray.MenuItem("Quit", lambda i, it: self.queue.put("quit")))
+            items.append(pystray.MenuItem("Exit", lambda i, it: self.queue.put("quit")))
             self.tray_icon = pystray.Icon("OmniSync", img, menu=pystray.Menu(*items))
             import threading
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
@@ -2045,8 +2162,8 @@ class ProjectManagerApp(ctk.CTk):
 
 if __name__ == "__main__":
     try:
-        if getattr(sys, "frozen", False):
-            hide_console_window()
+        # Hide the console window even in source mode if the user wants a clean UI
+        hide_console_window()
         log_startup("Starting OmniProjectSync...")
         app = ProjectManagerApp()
         app.protocol("WM_DELETE_WINDOW", app.on_close)
