@@ -15,12 +15,14 @@ import json
 import hashlib
 import tempfile
 import queue
+import re
+import traceback
 import firebase_admin
 from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.4.0"
+VERSION = "4.7.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
@@ -30,6 +32,7 @@ def get_base_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_DIR = get_base_dir()
+STARTUP_LOG = os.path.join(BASE_DIR, "omnisync_startup.log")
 
 ENV_PATH = os.path.join(BASE_DIR, "secrets.env")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
@@ -50,8 +53,9 @@ PORTABLE_MODE_ENV = "PORTABLE_MODE"
 PORTABLE_ROOT_ENV = "PORTABLE_ROOT"
 PORTABLE_AUTO_CLEAN_ENV = "PORTABLE_AUTO_CLEANUP"
 
-ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("blue")
+load_dotenv(ENV_PATH)
+ctk.set_appearance_mode(os.getenv("APPEARANCE_MODE", "Dark"))
+ctk.set_default_color_theme(os.getenv("UI_THEME", "blue"))
 
 # Hidden projects list (loaded from env, used by sync_to_firestore)
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
@@ -97,6 +101,57 @@ def load_registry(app):
     merged.update(local)
     return merged
 
+def log_startup(message: str):
+    try:
+        os.makedirs(os.path.dirname(STARTUP_LOG), exist_ok=True)
+        with open(STARTUP_LOG, "a", encoding="utf-8") as f:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
+
+def hide_console_window():
+    try:
+        if sys.platform != "win32":
+            return
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+def parse_winget_list_output(output: str):
+    apps = []
+    lines = output.splitlines()
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith("---"):
+            start = i + 1
+            break
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        if "No installed package found" in line:
+            continue
+        parts = re.split(r"\s{2,}", line.strip())
+        if len(parts) < 2:
+            continue
+        name = parts[0].strip()
+        app_id = parts[1].strip()
+        if not name or not app_id or app_id.lower() == "id":
+            continue
+        apps.append((name, app_id))
+    # Deduplicate by id, keep first name.
+    seen = set()
+    deduped = []
+    for name, app_id in apps:
+        if app_id in seen:
+            continue
+        seen.add(app_id)
+        deduped.append((name, app_id))
+    return deduped
+
 def resolve_credentials_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -126,12 +181,65 @@ def resolve_credentials_path(path: str | None) -> str | None:
 
 # --- UI WINDOWS ---
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+        self.widget.bind("<FocusIn>", self.show_tip)
+        self.widget.bind("<FocusOut>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text: return
+        try:
+            x = self.widget.winfo_rootx() + 25
+            y = self.widget.winfo_rooty() + 25
+            self.tip_window = ctk.CTkToplevel(self.widget)
+            self.tip_window.wm_overrideredirect(True)
+            self.tip_window.wm_geometry(f"+{x}+{y}")
+            self.tip_window.attributes("-topmost", True)
+            label = ctk.CTkLabel(self.tip_window, text=self.text, height=20, corner_radius=4, fg_color=("gray80", "gray20"), text_color=("black", "white"), font=("", 10))
+            label.pack(padx=5, pady=2)
+        except Exception:
+            pass
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
 class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Login")
-        self.geometry("350x380")
+        self.geometry("350x380+100+100")
         bring_to_front(self, parent)
+        try:
+            self.update_idletasks()
+            self.state("normal")
+            self.wm_deiconify()
+            self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after(500, lambda: self.attributes("-topmost", False))
+            try:
+                import ctypes
+                hwnd = self.winfo_id()
+                ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            self.deiconify()
+        except Exception:
+            pass
         self.main_app = parent
         self.protocol("WM_DELETE_WINDOW", self.main_app.on_close)
 
@@ -142,33 +250,25 @@ class LoginWindow(ctk.CTkToplevel):
         if email_saved: self.email_entry.insert(0, email_saved)
 
         ctk.CTkLabel(self, text="Password").pack(pady=(10,0))
-
-        self.pwd_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.pwd_frame.pack(fill="x", padx=20)
-
-        self.password_entry = ctk.CTkEntry(self.pwd_frame, placeholder_text="Enter your password", show="*")
-        self.password_entry.pack(side="left", fill="x", expand=True)
-
-        self.btn_show = ctk.CTkButton(self.pwd_frame, text="👁️", width=30, fg_color="transparent", text_color="gray", hover_color=None, command=self.toggle_password)
-        self.btn_show.pack(side="right", padx=(5,0))
+        self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter your password", show="*")
+        self.password_entry.pack(fill="x", padx=20)
+        self.show_password_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            self,
+            text="Show password",
+            variable=self.show_password_var,
+            command=self._toggle_password_visibility,
+        ).pack(pady=(6, 0), padx=20, anchor="w")
 
         self.status_lbl = ctk.CTkLabel(self, text="", text_color="red", font=("", 10))
         self.status_lbl.pack(pady=(5,0))
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, command=self.login).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
-
-    def toggle_password(self):
-        if self.password_entry.cget("show") == "*":
-            self.password_entry.configure(show="")
-            self.btn_show.configure(text="🔒")
-        else:
-            self.password_entry.configure(show="*")
-            self.btn_show.configure(text="👁️")
 
     def register(self):
         email = self.email_entry.get().strip()
@@ -251,6 +351,9 @@ class LoginWindow(ctk.CTkToplevel):
         except Exception as e:
             self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
 
+    def _toggle_password_visibility(self):
+        self.password_entry.configure(show="" if self.show_password_var.get() else "*")
+
 
 class SoftwareBrowserWindow(ctk.CTkToplevel):
     def __init__(self, parent, callback):
@@ -258,22 +361,28 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.search_var = ctk.StringVar(); self.search_var.trace("w", self._filter_list)
         ctk.CTkEntry(self, textvariable=self.search_var, placeholder_text="🔍 Search...").pack(fill="x", padx=10, pady=5)
         self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=40)
+        self.is_scanning = True
+        ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+        self.btn_confirm = ctk.CTkButton(self, text="Add Selected (0)", command=self.confirm, state="disabled", fg_color="#22c55e", height=45, corner_radius=22)
         self.btn_confirm.pack(fill="x", padx=20, pady=10)
         threading.Thread(target=self._scan, daemon=True).start()
     def _scan(self):
         try:
             res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            lines = res.stdout.splitlines(); start = next((i+1 for i,l in enumerate(lines) if l.startswith("---")), 0)
-            self.apps = [(p[0].strip(), p[1].strip()) for l in lines[start:] if (p:=l.split("  ")) and len(p)>=2 and len(p[1].strip())>2]
-            self.after(0, self._filter_list)
+            self.apps = parse_winget_list_output(res.stdout)
         except: pass
+        finally:
+            self.is_scanning = False
+            self.after(0, self._filter_list)
     def _filter_list(self, *a):
         q = self.search_var.get().lower(); [w.destroy() for w in self.scroll.winfo_children()]
+        if getattr(self, "is_scanning", False):
+            ctk.CTkLabel(self.scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+            return
         count = 0
         for n, i in self.apps:
             if q in n.lower() or q in i.lower():
-                if count > 80: break
+                if count > 200: break
                 self._create_row(n, i); count += 1
     def _create_row(self, n, i):
         f = ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=2)
@@ -284,6 +393,145 @@ class SoftwareBrowserWindow(ctk.CTkToplevel):
         self.selected_ids.remove(i) if i in self.selected_ids else self.selected_ids.add(i)
         self.btn_confirm.configure(text=f"Add Selected ({len(self.selected_ids)})", state="normal" if self.selected_ids else "disabled"); self._filter_list()
     def confirm(self): self.callback(list(self.selected_ids)); self.destroy()
+
+class InstalledAppsWindow(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        bring_to_front(self, parent)
+        self.title("Installed Apps")
+        self.geometry("1000x650")
+        self.app = parent
+        self.apps = []
+        self.filtered_apps = []
+        self.selected_app_id = None
+        self.selected_app_name = None
+        self.app_buttons = {}
+        self.project_checks = {}
+
+        # Search + list (left)
+        left = ctk.CTkFrame(self)
+        left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+
+        self.search_var = ctk.StringVar()
+        self.search_var.trace("w", self._filter_apps)
+        ctk.CTkEntry(left, textvariable=self.search_var, placeholder_text="Search installed apps...").pack(fill="x", pady=(0, 8))
+        self.app_scroll = ctk.CTkScrollableFrame(left)
+        self.app_scroll.pack(fill="both", expand=True)
+
+        self.is_scanning = True
+        ctk.CTkLabel(self.app_scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+
+        # Projects (right)
+        right = ctk.CTkFrame(self)
+        right.pack(side="right", fill="both", expand=True, padx=10, pady=10)
+
+        self.selected_label = ctk.CTkLabel(right, text="Select an app to manage projects", font=("", 14, "bold"))
+        self.selected_label.pack(anchor="w")
+        self.auto_label = ctk.CTkLabel(right, text="Auto-uninstall: enabled (when unused by any project)", text_color="gray")
+        self.auto_label.pack(anchor="w", pady=(0, 5))
+
+        self.project_scroll = ctk.CTkScrollableFrame(right)
+        self.project_scroll.pack(fill="both", expand=True, pady=(5, 0))
+
+        self.status_label = ctk.CTkLabel(right, text="", text_color="gray")
+        self.status_label.pack(anchor="w", pady=(5, 0))
+
+        threading.Thread(target=self._scan_apps, daemon=True).start()
+
+    def _scan_apps(self):
+        try:
+            res = subprocess.run(["winget", "list"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            self.apps = parse_winget_list_output(res.stdout)
+            self.filtered_apps = list(self.apps)
+        except Exception as e:
+            self.after(0, lambda: self.status_label.configure(text=f"Failed to load apps: {e}"))
+        finally:
+            self.is_scanning = False
+            self.after(0, self._render_apps)
+
+    def _filter_apps(self, *a):
+        q = self.search_var.get().lower().strip()
+        if not q:
+            self.filtered_apps = list(self.apps)
+        else:
+            self.filtered_apps = [(n, i) for n, i in self.apps if q in n.lower() or q in i.lower()]
+        self._render_apps()
+
+    def _render_apps(self):
+        for w in self.app_scroll.winfo_children():
+            w.destroy()
+
+        if getattr(self, "is_scanning", False):
+            ctk.CTkLabel(self.app_scroll, text="⏳ Scanning installed software...\n(This usually takes 10-20 seconds)", font=("", 14), text_color="gray").pack(pady=20)
+            return
+
+        self.app_buttons.clear()
+
+        for name, app_id in self.filtered_apps[:300]:
+            is_selected = app_id == self.selected_app_id
+            btn = ctk.CTkButton(
+                self.app_scroll,
+                text=f"{name}  ({app_id})",
+                anchor="w",
+                fg_color="#2563eb" if is_selected else "transparent",
+                text_color="white" if is_selected else "gray90",
+                command=lambda n=name, i=app_id: self._select_app(n, i)
+            )
+            btn.pack(fill="x", pady=2)
+            self.app_buttons[app_id] = btn
+
+    def _select_app(self, name, app_id):
+        self.selected_app_id = app_id
+        self.selected_app_name = name
+        self.selected_label.configure(text=f"{name}  ({app_id})")
+        self._render_apps()
+        self._render_projects_for_app(app_id)
+
+    def _render_projects_for_app(self, app_id):
+        for w in self.project_scroll.winfo_children():
+            w.destroy()
+        self.project_checks.clear()
+
+        projects = self.app._get_projects_snapshot()
+        count = 0
+        for proj in projects:
+            name = proj["name"]
+            status = proj["status"]
+            exists = proj["exists"]
+            manifest_path = proj.get("manifest_path")
+
+            row = ctk.CTkFrame(self.project_scroll, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+
+            if status == "Cloud" and not exists:
+                label_text = f"{name} [{status}] (not downloaded)"
+            else:
+                label_text = f"{name} [{status}]" + ("" if exists else " (missing)")
+            label = ctk.CTkLabel(row, text=label_text, anchor="w")
+            label.pack(side="left", padx=(0, 5), fill="x", expand=True)
+
+            var = ctk.BooleanVar(value=self.app._project_has_software(manifest_path, app_id))
+            chk = ctk.CTkCheckBox(
+                row,
+                text="",
+                variable=var,
+                state="normal" if manifest_path else "disabled",
+                command=lambda n=name, s=status, v=var: self._toggle_project(n, s, app_id, v)
+            )
+            chk.pack(side="right")
+
+            self.project_checks[name] = var
+            count += 1
+
+        self.status_label.configure(text=f"{count} projects loaded.")
+
+    def _toggle_project(self, name, status, app_id, var):
+        enabled = bool(var.get())
+        changed = self.app._update_project_software(name, status, app_id, enabled)
+        if changed:
+            self.status_label.configure(text=f"Saved: {name} -> {'enabled' if enabled else 'disabled'}")
+        else:
+            self.status_label.configure(text=f"No change: {name}")
 
 class ProjectConfigWindow(ctk.CTkToplevel):
     def __init__(self, parent, name, root):
@@ -298,16 +546,16 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         self.scroll_files = ctk.CTkScrollableFrame(tf); self.scroll_files.pack(fill="both", expand=True)  
         f_add = ctk.CTkFrame(tf); f_add.pack(fill="x", pady=5)
         self.entry_path = ctk.CTkEntry(f_add, placeholder_text="C:\\Path\\To\\External\\Folder"); self.entry_path.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(f_add, text="Add", width=80, command=self.add_path).pack(side="right")
+        ctk.CTkButton(f_add, text="Add", width=80, height=32, corner_radius=16, command=self.add_path).pack(side="right")
         self.scroll_soft = ctk.CTkScrollableFrame(ts); self.scroll_soft.pack(fill="both", expand=True)    
         s_add = ctk.CTkFrame(ts); s_add.pack(fill="x", pady=5)
         self.entry_soft = ctk.CTkEntry(s_add, placeholder_text="Software ID..."); self.entry_soft.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(s_add, text="Browse", width=80, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
-        ctk.CTkButton(s_add, text="Add ID", width=80, command=self.add_software_id).pack(side="right")    
+        ctk.CTkButton(s_add, text="Browse", width=80, height=32, corner_radius=16, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
+        ctk.CTkButton(s_add, text="Add ID", width=80, height=32, corner_radius=16, command=self.add_software_id).pack(side="right")    
         self.scroll_app_state = ctk.CTkScrollableFrame(ta); self.scroll_app_state.pack(fill="both", expand=True)
         a_add = ctk.CTkFrame(ta); a_add.pack(fill="x", pady=5)
         self.entry_app_state_path = ctk.CTkEntry(a_add, placeholder_text="C:\\Users\\...\\AppData\\Roaming\\..._profile"); self.entry_app_state_path.pack(side="left", expand=True, fill="x", padx=5)
-        ctk.CTkButton(a_add, text="Add", width=80, command=self.add_app_state_path).pack(side="right")    
+        ctk.CTkButton(a_add, text="Add", width=80, height=32, corner_radius=16, command=self.add_app_state_path).pack(side="right")    
 
     def _load_manifest(self):
         if os.path.exists(self.manifest_path):
@@ -324,14 +572,22 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         for w in self.scroll_app_state.winfo_children(): w.destroy()
         for p in self.data.get("external_paths",[]):
             r=ctk.CTkFrame(self.scroll_files, fg_color="transparent"); r.pack(fill="x")
-            ctk.CTkLabel(r, text=p).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_path(x)).pack(side="right")
+            ctk.CTkLabel(r, text=p).pack(side="left")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_path(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove path")
         for s in self.data.get("software",[]):
             r=ctk.CTkFrame(self.scroll_soft, fg_color="transparent"); r.pack(fill="x")
-            ctk.CTkLabel(r, text=s).pack(side="left"); ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=s: self.remove_software(x)).pack(side="right")
+            ctk.CTkLabel(r, text=s).pack(side="left")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=s: self.remove_software(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove software")
         for p in self.data.get("app_state_paths", []):
             r = ctk.CTkFrame(self.scroll_app_state, fg_color="transparent"); r.pack(fill="x")
             ctk.CTkLabel(r, text=p).pack(side="left")
-            ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_app_state_path(x)).pack(side="right")
+            btn=ctk.CTkButton(r, text="🗑️", width=30, fg_color="red", command=lambda x=p: self.remove_app_state_path(x))
+            btn.pack(side="right")
+            ToolTip(btn, "Remove app state")
 
     def add_path(self):
         p=self.entry_path.get().strip()
@@ -359,79 +615,86 @@ class ProjectConfigWindow(ctk.CTkToplevel):
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, env):
-        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x750"); self.entries={}
+        super().__init__(parent); bring_to_front(self, parent); self.env=env; self.parent=parent; self.title("Settings"); self.geometry("600x850"); self.entries={}
+        
+        # Appearance Section
+        self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        ctk.CTkLabel(self.scroll, text="Appearance", font=("", 14, "bold")).pack(anchor="w", pady=(0,5))
+        
+        # Theme Choice
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Appearance Mode", width=200, anchor="w").pack(side="left")
+        self.mode_var = ctk.StringVar(value=ctk.get_appearance_mode())
+        self.mode_menu = ctk.CTkOptionMenu(f, values=["Dark", "Light", "System"], variable=self.mode_var, command=self._change_appearance_mode)
+        self.mode_menu.pack(side="left", fill="x", expand=True)
+
+        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
+        ctk.CTkLabel(f, text="Color Theme", width=200, anchor="w").pack(side="left")
+        self.theme_var = ctk.StringVar(value=os.getenv("UI_THEME", "blue"))
+        self.theme_menu = ctk.CTkOptionMenu(f, values=["blue", "green", "dark-blue"], variable=self.theme_var, command=self._change_color_theme)
+        self.theme_menu.pack(side="left", fill="x", expand=True)
+
         self.fields = [
             ("Backup Drive Path","DRIVE_ROOT_FOLDER_ID"),
             ("Local Workspace Root","LOCAL_WORKSPACE_ROOT"),
             ("GitHub Token","GITHUB_TOKEN"),
-            ("Hidden Projects","HIDDEN_PROJECTS"),
+            ("Hidden Projects","HIDDEN_PROJECTS")
+        ]
+        
+        self.advanced_fields = [
             ("Firebase Project ID", "FIREBASE_PROJECT_ID"),
             ("Firebase Doc Path", "FIREBASE_DOCUMENT_PATH"),
-            ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS")
-        ]
-        self.remote_fields = [
+            ("Google App Credentials Path", "GOOGLE_APPLICATION_CREDENTIALS"),
             ("Remote Access Token", "REMOTE_ACCESS_TOKEN"),
             ("Public Host (for Android)", "REMOTE_PUBLIC_HOST"),
             ("Bind Host", "REMOTE_BIND_HOST"),
-            ("Remote Port", "REMOTE_PORT"),
+            ("Remote Port", "REMOTE_PORT")
         ]
-        self.scroll = ctk.CTkScrollableFrame(self); self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         # General settings section
-        ctk.CTkLabel(self.scroll, text="General Settings", font=("", 14, "bold")).pack(anchor="w", pady=(0,5))
+        ctk.CTkLabel(self.scroll, text="General Settings", font=("", 14, "bold")).pack(anchor="w", pady=(20,5))
         for l,k in self.fields:
             f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5); ctk.CTkLabel(f, text=l, width=200, anchor="w").pack(side="left")
             e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
 
-        # Remote Agent section
-        ctk.CTkLabel(self.scroll, text="Remote Agent (Android)", font=("", 14, "bold")).pack(anchor="w", pady=(20,5))
+        # Advanced Section (Collapsible)
+        self.adv_container = CollapsibleFrame(self.scroll, title="Advanced / Automation Settings")
+        self.adv_container.pack(fill="x", pady=10)
+        
+        # Remote Agent section within Advanced
+        ctk.CTkLabel(self.adv_container.content, text="Remote Agent & Cloud Config", font=("", 12, "bold")).pack(anchor="w", pady=(5,5))
 
-        # Token field with generate button
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Remote Access Token", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f, show="*"); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_ACCESS_TOKEN"]=e
-        self.btn_show_token = ctk.CTkButton(f, text="👁️", width=30, fg_color="transparent", text_color="gray", command=self._toggle_token)
-        self.btn_show_token.pack(side="left", padx=(5,0))
-        ctk.CTkButton(f, text="Generate", width=80, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(5,0))
+        for l,k in self.advanced_fields:
+            f=ctk.CTkFrame(self.adv_container.content, fg_color="transparent"); f.pack(fill="x", pady=2)
+            ctk.CTkLabel(f, text=l, width=180, anchor="w", font=("", 11)).pack(side="left")
+            e=ctk.CTkEntry(f, font=("", 11)); e.pack(side="left", fill="x", expand=True); self.entries[k]=e
+            
+            # Special buttons for specific advanced fields
+            if k == "REMOTE_ACCESS_TOKEN":
+                ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(2,0))
+            elif k == "REMOTE_PUBLIC_HOST":
+                ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(2,0))
+                ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(2,0))
 
-        # Public host field with auto-detect buttons
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Public Host (Android)", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PUBLIC_HOST"]=e
-        ctk.CTkButton(f, text="Tunnel", width=70, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(5,0))
-        ctk.CTkButton(f, text="LAN", width=50, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(5,0))
-
-        # Bind host
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Bind Host", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_BIND_HOST"]=e
-        e.insert(0, "127.0.0.1")  # Default
-
-        # Port
-        f=ctk.CTkFrame(self.scroll, fg_color="transparent"); f.pack(fill="x", pady=5)
-        ctk.CTkLabel(f, text="Remote Port", width=200, anchor="w").pack(side="left")
-        e=ctk.CTkEntry(f); e.pack(side="left", fill="x", expand=True); self.entries["REMOTE_PORT"]=e
-        e.insert(0, "8765")  # Default
-
-        # Help text
-        help_text = "Use your Cloudflare tunnel URL (e.g., omni.yourdomain.com) for remote access.\nLAN IP only works on same network. 127.0.0.1 will NOT work!"
-        ctk.CTkLabel(self.scroll, text=help_text, text_color="#f97316", font=("", 11)).pack(anchor="w", pady=(5,10))
+        # Help text in advanced
+        help_text = "Use Gen to create a secure token. Tun/LAN to auto-detect hosts.\nThese settings are usually managed automatically."
+        ctk.CTkLabel(self.adv_container.content, text=help_text, text_color="gray", font=("", 10)).pack(anchor="w", pady=(5,10))
 
         # Restart agent checkbox
         self.restart_agent_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(self.scroll, text="Restart remote agent after save", variable=self.restart_agent_var).pack(anchor="w", pady=5)
 
-        ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=40).pack(fill="x", padx=20, pady=20)
+        ctk.CTkButton(self, text="💾 Save Configuration", command=self.save, fg_color="#22c55e", height=45, corner_radius=22).pack(fill="x", padx=20, pady=20)
         self.load()
 
-    def _toggle_token(self):
-        e = self.entries["REMOTE_ACCESS_TOKEN"]
-        if e.cget("show") == "*":
-            e.configure(show="")
-            self.btn_show_token.configure(text="🔒")
-        else:
-            e.configure(show="*")
-            self.btn_show_token.configure(text="👁️")
+    def _change_appearance_mode(self, new_mode):
+        ctk.set_appearance_mode(new_mode)
+
+    def _change_color_theme(self, new_theme):
+        # Note: changing theme at runtime is limited in ctk without restart for some elements,
+        # but we save it for next launch.
+        pass
 
     def _generate_token(self):
         import secrets as sec
@@ -481,22 +744,57 @@ class SettingsWindow(ctk.CTkToplevel):
         from tkinter import messagebox
         messagebox.showinfo(
             "Cloudflare Tunnel",
-            "No tunnel config found.\n\n"
-            "Paste your tunnel URL directly (e.g., omni.yourdomain.com)"
+            """No tunnel config found.
+
+"
+            "Paste your tunnel URL directly (e.g., omni.yourdomain.com)"""
         )
 
     def load(self):
         if os.path.exists(self.env):
             with open(self.env) as f:
-                d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in f if "=" in l and not l.startswith("#")}
-                all_fields = self.fields + self.remote_fields
-                for l,k in all_fields:
+                # Read env file, handling potential encoding/null byte issues
+                raw = f.read().replace('\0', '')
+                d = {l.split("=",1)[0].strip():l.split("=",1)[1].strip() for l in raw.splitlines() if "=" in l and not l.startswith("#")}
+                
+                all_keys = [k for _,k in self.fields] + [k for _,k in self.advanced_fields]
+                for k in all_keys:
                     if k in self.entries:
                         self.entries[k].delete(0, "end")
                         self.entries[k].insert(0, d.get(k,""))
+                
+                # Load theme settings
+                self.mode_var.set(d.get("APPEARANCE_MODE", ctk.get_appearance_mode()))
+                self.theme_var.set(d.get("UI_THEME", "blue"))
+                ctk.set_appearance_mode(self.mode_var.get())
 
     def save(self):
-        with open(self.env, "w") as f: f.write("\n".join([f"{k}={e.get().strip()}" for k,e in self.entries.items()]))
+        settings = {k: e.get().strip() for k, e in self.entries.items()}
+        settings["APPEARANCE_MODE"] = self.mode_var.get()
+        settings["UI_THEME"] = self.theme_var.get()
+        # Ensure required numeric settings have safe defaults when left blank.
+        if not settings.get("REMOTE_PORT"):
+            settings["REMOTE_PORT"] = "8765"
+            entry = self.entries.get("REMOTE_PORT")
+            if entry:
+                entry.delete(0, "end")
+                entry.insert(0, settings["REMOTE_PORT"])
+        
+        # Merge with existing env file to preserve comments/other vars
+        existing = {}
+        if os.path.exists(self.env):
+            with open(self.env, "r") as f:
+                for line in f:
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.split("=", 1)
+                        existing[k.strip()] = v.strip()
+        
+        existing.update(settings)
+        
+        with open(self.env, "w") as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
+                
         load_dotenv(self.env, override=True)
         if hasattr(self.parent, '_sync_settings_to_cloud'):
             self.parent._sync_settings_to_cloud()
@@ -524,11 +822,12 @@ class PopupMenu(ctk.CTkToplevel):
         self.frame.pack(fill="both", expand=True)
 
         for item in menu_items:
-            # item format: (text, command, fg_color, text_color)
+            # item format: (text, command, fg_color, text_color, image)
             text = item[0]
             cmd = item[1]
             fg = item[2] if len(item) > 2 else "transparent"
             tc = item[3] if len(item) > 3 else ("black", "white")
+            img = item[4] if len(item) > 4 else None
 
             # Hover color logic
             hover = ("#e5e7eb", "#374151") if fg == "transparent" else None
@@ -536,6 +835,7 @@ class PopupMenu(ctk.CTkToplevel):
             btn = ctk.CTkButton(
                 self.frame,
                 text=text,
+                image=img,
                 command=lambda c=cmd: self._invoke(c),
                 fg_color=fg,
                 text_color=tc,
@@ -660,18 +960,35 @@ class ProjectCard(ctk.CTkFrame):
     def _populate_controls(self):
         # Re-create buttons every time to ensure fresh state/bindings
         if self.status == "Local":
-            self._btn("📂 Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), "gray")
-            self._btn("🤖 Studio", lambda: self.app.open_studio(self.name), "#3DDC84", "black")
-            self._btn("🌌 AntiG", lambda: self.app.open_antigravity(self.name), "#9333ea")
-            self._btn("⚙️ Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), "#64748b")
-            self._btn("☁️ Deactivate", lambda: self.app.deactivate_project(self.name), "#ef4444")
+            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), color="gray", icon=self.app.icons.get("folder"))
+            self._btn("Studio", lambda: self.app.open_studio(self.name), color="#3DDC84", text_color="black", icon=self.app.icons.get("android_studio"))
+            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), color="#9333ea", icon=self.app.icons.get("antigravity"))
+            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), color="#64748b", icon=self.app.icons.get("config_cog"))
+            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), color="#ef4444", icon=self.app.icons.get("cloud"))
         else:
-            self._btn("🚀 Activate", lambda: self.app.activate_project(self.name), "#3b82f6")
-            self._btn("❌ Forget", lambda: self.app.forget_project(self.name), "transparent", "red", border=1)
+            self._btn("Activate", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"))
+            self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"))
 
-    def _btn(self, txt, cmd, bg="transparent", fg="white", border=0):
-        btn = ctk.CTkButton(self.controls, text=txt, command=cmd, fg_color=bg, text_color=fg, border_width=border, height=25)
-        btn.pack(fill="x", pady=2)
+    def _btn(self, txt, cmd, color=None, text_color=None, icon=None):
+        # Glassy Pill Style
+        accent = color if color and color != "transparent" else "gray50"
+        
+        if color == "transparent":
+             fg = "transparent"
+             border = "gray40"
+             hover = "gray60"
+             text_col = text_color if text_color else ("black", "white")
+        else:
+             fg = ("gray90", "gray20") # Glassy base
+             border = accent
+             hover = accent
+             text_col = text_color if text_color else ("black", "white")
+
+        btn = ctk.CTkButton(self.controls, text=txt, image=icon, command=cmd, 
+                            fg_color=fg, border_color=border, border_width=2,
+                            hover_color=hover, text_color=text_col,
+                            height=35, corner_radius=17)
+        btn.pack(fill="x", pady=3, padx=5)
         if self.busy:
             btn.configure(state="disabled")
 
@@ -700,6 +1017,19 @@ class ProjectCard(ctk.CTkFrame):
         self.lbl.bind("<Button-1>", self.toggle)
 
 class ProjectManagerApp(ctk.CTk):
+    def _load_icons(self):
+        self.icons = {}
+        icon_names = ["antigravity", "android_studio", "config_cog", "cloud", "activate", "settings", "apps", "export", "quit", "folder"]
+        for name in icon_names:
+            path = os.path.join(ASSET_PATH, f"{name}.png")
+            if os.path.exists(path):
+                try:
+                    img = Image.open(path)
+                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(20, 20))
+                except Exception:
+                    self.icons[name] = None
+            else:
+                self.icons[name] = None
 
     def _init_firebase(self):
         self.db = None
@@ -806,40 +1136,214 @@ class ProjectManagerApp(ctk.CTk):
             f.write("\n".join(lines) + "\n")
         load_dotenv(ENV_PATH, override=True)
 
+    def _init_login_inline(self):
+        self.login_frame = ctk.CTkFrame(self)
+        self.login_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        log_startup("Inline login created")
+
+        ctk.CTkLabel(self.login_frame, text="Email").pack(pady=(10, 0))
+        self.login_email_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Enter your email")
+        self.login_email_entry.pack(fill="x", padx=10)
+        email_saved = os.getenv("FIREBASE_EMAIL", "")
+        if email_saved:
+            self.login_email_entry.insert(0, email_saved)
+
+        ctk.CTkLabel(self.login_frame, text="Password").pack(pady=(10, 0))
+        self.login_password_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Enter your password", show="*")
+        self.login_password_entry.pack(fill="x", padx=10)
+        self.login_show_password_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            self.login_frame,
+            text="Show password",
+            variable=self.login_show_password_var,
+            command=self._toggle_inline_password_visibility,
+        ).pack(pady=(6, 0), padx=10, anchor="w")
+
+        self.login_status_lbl = ctk.CTkLabel(self.login_frame, text="", text_color="red", font=("", 10))
+        self.login_status_lbl.pack(pady=(5, 0))
+
+        btn_row = ctk.CTkFrame(self.login_frame, fg_color="transparent")
+        btn_row.pack(pady=10)
+        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline).pack(side="left", padx=5)
+
+        ctk.CTkButton(self.login_frame, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self._reset_inline).pack(pady=5)
+
+    def _register_inline(self):
+        email = self.login_email_entry.get().strip()
+        password = self.login_password_entry.get().strip()
+        if not email or not password:
+            self.login_status_lbl.configure(text="Email and password required")
+            return
+        self.login_status_lbl.configure(text="Registering...", text_color="white")
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+            if resp.status_code == 200:
+                self.login_status_lbl.configure(text="Account created! Logging in...", text_color="green")
+                self._login_inline()
+            else:
+                err = resp.json().get("error", {}).get("message", "Registration failed")
+                self.login_status_lbl.configure(text=f"Error: {err}")
+        except Exception:
+            self.login_status_lbl.configure(text="Connection error")
+
+    def _reset_inline(self):
+        email = self.login_email_entry.get().strip()
+        if not email:
+            self.login_status_lbl.configure(text="Enter email first", text_color="orange")
+            return
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
+            if resp.status_code == 200:
+                self.login_status_lbl.configure(text="Reset email sent!", text_color="green")
+            else:
+                err = resp.json().get("error", {}).get("message", "Error")
+                self.login_status_lbl.configure(text=f"Error: {err}")
+        except Exception:
+            self.login_status_lbl.configure(text="Connection failed")
+
+    def _login_inline(self):
+        email = self.login_email_entry.get().strip()
+        password = self.login_password_entry.get().strip()
+        if not email or not password:
+            self.login_status_lbl.configure(text="Missing email/password")
+            return
+        self.login_status_lbl.configure(text="Authenticating...", text_color="white")
+        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+        try:
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
+            data = resp.json()
+            if resp.status_code == 200:
+                uid = data["localId"]
+                is_owner = email.lower() in OWNER_EMAILS
+                self.save_setting("FIREBASE_UID", uid)
+                self.save_setting("FIREBASE_EMAIL", email)
+                self.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
+                if is_owner:
+                    self.save_setting("DEVELOPER_MODE", "1")
+                os.environ["FIREBASE_UID"] = uid
+                self.firebase_uid = uid
+                if self.db:
+                    try:
+                        self.db.collection("users").document(uid).set({
+                            "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
+                        }, merge=True)
+                    except Exception:
+                        pass
+                self.show_main_app()
+            else:
+                err = data.get("error", {}).get("message", "Login failed")
+                self.login_status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
+        except Exception as e:
+            self.login_status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+
+    def _toggle_inline_password_visibility(self):
+        self.login_password_entry.configure(
+            show="" if self.login_show_password_var.get() else "*"
+        )
+
     def __init__(self):
         super().__init__()
+        log_startup("ProjectManagerApp init started")
         # Bind to instance to avoid Tk __getattr__ fallback on missing attrs.
         self._load_reg = lambda: load_registry(self)
         # Ensure attributes exist before login flow touches them.
         self.db = None
         self.firebase_uid = None
         self.title(APP_NAME)
-        self.geometry("360x800")
+        self.geometry("360x800+80+80")
         self.tray_icon = None
         self._cloud_meta_error_logged = False
         self._portable_cleanup_scheduled = False
         self.queue = queue.Queue()
         self.agent_process = None
-        self.withdraw() # Hide main window initially
-
-        self.login_window = LoginWindow(self)
+        self.login_window = None
+        if not getattr(sys, "frozen", False):
+            self.withdraw() # Hide main window initially for source runs
+            try:
+                self.login_window = LoginWindow(self)
+                log_startup("LoginWindow created")
+            except Exception as e:
+                log_startup(f"LoginWindow failed: {e}")
+                log_startup(traceback.format_exc())
+                raise
+        else:
+            self._init_login_inline()
+        if getattr(sys, "frozen", False):
+            try:
+                self.state("normal")
+                self.wm_deiconify()
+                self.deiconify()
+                self.lift()
+                if self.login_window:
+                    self.after(100, lambda: bring_to_front(self.login_window, self))
+                    self.after(200, lambda: self.login_window.focus_force())
+                log_startup("Forced login window to front (frozen)")
+                try:
+                    import ctypes
+                    hwnd = self.winfo_id()
+                    ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+                def _nudge_login(attempt=0):
+                    if attempt >= 5:
+                        return
+                    try:
+                        if self.login_window:
+                            self.login_window.deiconify()
+                            self.login_window.lift()
+                            self.login_window.attributes("-topmost", True)
+                            self.login_window.after(200, lambda: self.login_window.attributes("-topmost", False))
+                    except Exception:
+                        pass
+                    self.after(400, lambda: _nudge_login(attempt + 1))
+                self.after(300, _nudge_login)
+            except Exception as e:
+                log_startup(f"LoginWindow bring-to-front failed: {e}")
         self._check_queue()
+        if getattr(sys, "frozen", False):
+            self.after(200, self._ensure_visible)
+        log_startup("ProjectManagerApp init finished")
 
     def _check_queue(self):
         try:
             while True:
                 task = self.queue.get_nowait()
                 if task == "deiconify":
-                    self.deiconify()
-                    bring_to_front(self)
+                    if getattr(self, "login_window", None) and self.login_window.winfo_exists():
+                        try:
+                            self.login_window.deiconify()
+                            bring_to_front(self.login_window, self)
+                        except Exception:
+                            pass
+                    else:
+                        self.deiconify()
+                        bring_to_front(self)
                 elif task == "quit":
-                    self.on_close()
+                    self.exit_app()
         except queue.Empty:
             pass
         self.after(200, self._check_queue)
 
     def show_main_app(self):
+        if getattr(self, "login_window", None):
+            try:
+                self.login_window.destroy()
+            except Exception:
+                pass
+        if getattr(self, "login_frame", None):
+            try:
+                self.login_frame.destroy()
+            except Exception:
+                pass
         self.deiconify() # Show main window
+        self._load_icons()
         self._init_compact_ui()
         self._start_tray_icon()
         self._start_remote_agent()
@@ -856,25 +1360,27 @@ class ProjectManagerApp(ctk.CTk):
         ctk.CTkLabel(header, text=APP_NAME, font=("", 16, "bold")).pack(side="left", padx=15, pady=10)    
 
         # Menu Button (Settings/Quit)
-        self.menu_btn = ctk.CTkButton(header, text="☰", width=40, command=self.show_menu)
-        self.menu_btn.pack(side="right", padx=10)
+        self.menu_btn = ctk.CTkButton(header, text="", image=self.icons.get("settings"), width=30, height=30, corner_radius=0, fg_color="transparent", hover_color=("gray75", "gray25"), command=self.show_menu)
+        self.menu_btn.pack(side="right", padx=15)
+        ToolTip(self.menu_btn, "Settings & Menu")
 
         # 2. Main List
         self.project_list = ctk.CTkScrollableFrame(self)
         self.project_list.pack(fill="both", expand=True, padx=5, pady=5)
         self.project_cards = {}
+        self.category_frames = {}
 
         # 3. Footer
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", side="bottom", padx=5, pady=5)
 
-        ctk.CTkButton(footer, text="➕ New Project", command=self.show_new_project).pack(fill="x", pady=2)
+        ctk.CTkButton(footer, text=" New Project", image=self.icons.get("activate"), height=45, corner_radius=22, command=self.show_new_project).pack(fill="x", pady=2)
 
         # Activity Log (Collapsible)
         self.log_container = CollapsibleFrame(footer, title="Activity Log")
         self.log_container.pack(fill="x", pady=2)
 
-        self.log_box = ctk.CTkTextbox(self.log_container.content, height=100, font=("Consolas", 10))      
+        self.log_box = ctk.CTkTextbox(self.log_container.content, height=250, font=("Consolas", 10))      
         self.log_box.pack(fill="x", padx=2, pady=2)
         self.log_box.configure(state="disabled")
 
@@ -882,19 +1388,207 @@ class ProjectManagerApp(ctk.CTk):
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=(5,0))
 
+    def _load_categories(self):
+        path = os.path.join(CONFIG_DIR, "categories.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def _save_categories(self, data):
+        path = os.path.join(CONFIG_DIR, "categories.json")
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=4)
+        except:
+            pass
+
+    def _get_project_category(self, project_name):
+        cats = self._load_categories()
+        # Data structure: {"CategoryName": ["proj1", "proj2"], ...}
+        for cat, projects in cats.items():
+            if project_name in projects:
+                return cat
+        return "Uncategorized"
+
+    def _set_project_category(self, project_name, new_category):
+        cats = self._load_categories()
+        # Remove from old
+        for cat in cats:
+            if project_name in cats[cat]:
+                cats[cat].remove(project_name)
+        
+        # Add to new
+        if new_category not in cats:
+            cats[new_category] = []
+        if project_name not in cats[new_category]:
+            cats[new_category].append(project_name)
+        
+        # Cleanup empty
+        clean_cats = {k: v for k, v in cats.items() if v or k == new_category}
+        self._save_categories(clean_cats)
+        self._refresh_projects()
+
+
     def show_menu(self):
         menu_items = [
-            ("⚙️ Settings", lambda: SettingsWindow(self, ENV_PATH)),
-            ("📦 Export Launcher", self.export_portable_bundle),
-            ("☁️ Deactivate All", self.deactivate_all_projects),
+            ("Settings", lambda: SettingsWindow(self, ENV_PATH), "transparent", ("black", "white"), self.icons.get("settings")),
+            ("Installed Apps", lambda: InstalledAppsWindow(self), "transparent", ("black", "white"), self.icons.get("apps")),
+            ("Export Launcher", self.export_portable_bundle, "transparent", ("black", "white"), self.icons.get("export")),
+            ("Deactivate All", self.deactivate_all_projects, "transparent", ("black", "white"), self.icons.get("cloud")),
         ]
 
         if self._is_portable_mode():
-            menu_items.append(("🧹 Deactivate + Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black"))
+            menu_items.append(("Cleanup", lambda: self.deactivate_all_projects(cleanup=True, quit_after=True), "#f59e0b", "black", self.icons.get("quit")))
 
-        menu_items.append(("🚪 Quit", self.on_close, "red", "white"))
+        menu_items.append(("Quit", self.on_close, "red", "white", self.icons.get("quit")))
 
         PopupMenu(self, self.menu_btn, menu_items)
+
+    def _get_projects_snapshot(self):
+        root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+        drive_root = self._drive_root()
+
+        # Scan folders to keep registry fresh without touching UI.
+        local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))} if os.path.exists(root) else set()
+        cloud_folders = set()
+        if drive_root and os.path.exists(drive_root):
+            try:
+                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
+            except Exception:
+                cloud_folders = set()
+
+        registry = {}
+        registry.update(self._load_cloud_reg())
+        registry.update(self._load_local_reg())
+        for f in local_folders:
+            registry[f] = "Local"
+        for f in cloud_folders:
+            if registry.get(f) != "Local":
+                registry[f] = "Cloud"
+
+        projects = []
+        for name, status in sorted(registry.items()):
+            if name.lower() in HIDDEN_PROJECTS:
+                continue
+            path = self._project_path_for_status(name, status)
+            manifest_path = self._project_manifest_path(name, status, path)
+            projects.append({
+                "name": name,
+                "status": status,
+                "path": path,
+                "manifest_path": manifest_path,
+                "exists": bool(path and os.path.exists(path)),
+            })
+        return projects
+
+    def _project_path_for_status(self, name, status):
+        root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
+        drive_root = self._drive_root()
+        if status == "Local":
+            return os.path.join(root, name)
+        if not drive_root:
+            return None
+        return os.path.join(drive_root, name)
+
+    def _project_manifest_path(self, name, status, project_path):
+        if project_path and os.path.exists(project_path):
+            return os.path.join(project_path, "omni.json")
+        if status == "Cloud":
+            meta = self._cloud_meta_dir()
+            if meta:
+                try:
+                    project_meta = os.path.join(meta, "projects", name)
+                    os.makedirs(project_meta, exist_ok=True)
+                    return os.path.join(project_meta, "omni.json")
+                except Exception:
+                    return None
+        return None
+
+    def _load_project_manifest(self, manifest_path):
+        data = {"external_paths": [], "software": [], "app_state_paths": []}
+        if manifest_path and os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data.update(loaded)
+            except Exception:
+                pass
+        if "software" not in data:
+            data["software"] = []
+        if "external_paths" not in data:
+            data["external_paths"] = []
+        if "app_state_paths" not in data:
+            data["app_state_paths"] = []
+        return data
+
+    def _save_project_manifest(self, manifest_path, data):
+        if not manifest_path:
+            return False
+        try:
+            os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+            return True
+        except Exception as e:
+            self.log(f"⚠️ Failed to save manifest: {e}", "red")
+            return False
+
+    def _project_has_software(self, manifest_path, app_id):
+        if not manifest_path:
+            return False
+        data = self._load_project_manifest(manifest_path)
+        return app_id in data.get("software", [])
+
+    def _update_project_software(self, name, status, app_id, enabled):
+        project_path = self._project_path_for_status(name, status)
+        manifest_path = self._project_manifest_path(name, status, project_path)
+        if not manifest_path:
+            return False
+        data = self._load_project_manifest(manifest_path)
+        software = list(data.get("software", []))
+        changed = False
+
+        if enabled and app_id not in software:
+            software.append(app_id)
+            changed = True
+        if not enabled and app_id in software:
+            software.remove(app_id)
+            changed = True
+
+        if not changed:
+            return False
+
+        data["software"] = software
+        if not self._save_project_manifest(manifest_path, data):
+            return False
+
+        # Auto-uninstall when unused by any project.
+        if not enabled:
+            self._uninstall_app_if_unused(app_id)
+
+        self.sync_to_firestore()
+        return True
+
+    def _is_app_used_by_any_projects(self, app_id):
+        for proj in self._get_projects_snapshot():
+            manifest_path = proj.get("manifest_path")
+            if self._project_has_software(manifest_path, app_id):
+                return True
+        return False
+
+    def _uninstall_app_if_unused(self, app_id):
+        if self._is_app_used_by_any_projects(app_id):
+            return
+        try:
+            self.log(f"🧹 Uninstalling unused app: {app_id}")
+            subprocess.run(["winget", "uninstall", "-e", "--id", app_id, "--silent"], shell=True)
+        except Exception as e:
+            self.log(f"⚠️ Uninstall failed for {app_id}: {e}", "red")
 
     def reload_config(self):
         self._sync_settings_from_cloud()
@@ -1012,8 +1706,18 @@ class ProjectManagerApp(ctk.CTk):
             '$python = Join-Path $venv "Scripts\\python.exe"\n'
             'if (-not (Test-Path $python)) {\n'
             '    Write-Host "Creating portable venv..."\n'
-            '    $py = Get-Command py -ErrorAction SilentlyContinue\n'
-            '    if ($py) { & py -3 -m venv $venv } else { & python -m venv $venv }\n'
+            '    $found = $false\n'
+            '    if (Get-Command py -ErrorAction SilentlyContinue) {\n'
+            '        $found = $true\n'
+            '        & py -3 -m venv $venv\n'
+            '    } else {\n'
+            '        foreach ($c in @("python", "python3")) {\n'
+            '            if (Get-Command $c -ErrorAction SilentlyContinue) {\n'
+            '                try { & $c --version | Out-Null; if ($LASTEXITCODE -eq 0) { $found = $true; & $c -m venv $venv; break } } catch {}\n'
+            '            }\n'
+            '        }\n'
+            '    }\n'
+            '    if (-not $found) { Write-Error "Python not found. Please install Python."; exit 1 }\n'
             '    & $python -m pip install --upgrade pip\n'
             '    & $python -m pip install -r (Join-Path $root "requirements.txt")\n'
             '}\n'
@@ -1130,11 +1834,12 @@ class ProjectManagerApp(ctk.CTk):
 
         if quit_after:
             # Adding a small delay to ensure the cleanup script has time to be created
-            self.after(1000, self.on_close)
+            self.after(1000, self.exit_app)
 
     
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
+        self.category_frames = {}
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
@@ -1155,36 +1860,77 @@ class ProjectManagerApp(ctk.CTk):
 
         # 3. Build Registry
         registry = {}
-        # Start with what's in the saved registry files
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
-
-        # Merge in actual folders found
-        for f in local_folders:
-            registry[f] = "Local"
-        
+        for f in local_folders: registry[f] = "Local"
         for f in cloud_folders:
-            # If not already Local, it's Cloud
-            if registry.get(f) != "Local":
-                registry[f] = "Cloud"
-
-        # Cleanup registry: if it's in registry but doesn't exist in either place, remove it
-        # (Or keep it as 'Cloud' if you expect it might come back, but let's be clean)
-        for name in list(registry.keys()):
-            if name not in local_folders and name not in cloud_folders:
-                # If it's not local and not in drive, it's effectively "Forgotten" unless manually added
-                # But for now, let's keep everything found in the scan.
-                pass
+            if registry.get(f) != "Local": registry[f] = "Cloud"
 
         self._save_reg(registry)
 
+        # 4. Group by Category
+        categories = self._load_categories()
+        grouped = {"Uncategorized": []}
+        for cat in categories: grouped[cat] = []
+
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
-            status = registry[name]
-            # Create Card
-            card = ProjectCard(self.project_list, self, name, status)
-            self.project_cards[name] = card
+            cat = self._get_project_category(name)
+            if cat not in grouped: grouped[cat] = []
+            grouped[cat].append((name, registry[name]))
+
+        # 5. Render
+        # Sort categories: user defined first (alpha), then Uncategorized
+        cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
+        if grouped["Uncategorized"]: cat_names.append("Uncategorized")
+
+        for cat in cat_names:
+            projects = grouped[cat]
+            if not projects and cat == "Uncategorized": continue
+            
+            # Category Header/Container
+            # If Uncategorized is empty, skip. If others empty, show (to allow dragging in? or just show empty)
+            # For now, show.
+            
+            frame = CollapsibleFrame(self.project_list, title=f"{cat} ({len(projects)})")
+            frame.pack(fill="x", pady=5)
+            frame.toggle() # Expand by default
+            self.category_frames[cat] = frame
+
+            # Add "Add Category" or "Rename" buttons to header? maybe later.
+            
+            for name, status in projects:
+                card = ProjectCard(frame.content, self, name, status)
+                self.project_cards[name] = card
+                # Bind right click for category move
+                card.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                card.header.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                if hasattr(card, "lbl"):
+                    card.lbl.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+
         self.sync_to_firestore()
+
+    def _show_category_menu(self, event, project_name):
+        menu_items = []
+        current_cat = self._get_project_category(project_name)
+        
+        # Existing categories
+        cats = sorted(list(self._load_categories().keys()))
+        if "Uncategorized" not in cats: cats.append("Uncategorized")
+        
+        for cat in cats:
+            if cat == current_cat: continue
+            menu_items.append((f"Move to {cat}", lambda c=cat: self._set_project_category(project_name, c), "transparent", ("black", "white")))
+            
+        menu_items.append(("New Category...", lambda: self._prompt_new_category(project_name), "#3b82f6", "white"))
+        
+        PopupMenu(self, event.widget, menu_items)
+
+    def _prompt_new_category(self, project_name):
+        dialog = ctk.CTkInputDialog(text="Enter new category name:", title="New Category")
+        new_cat = dialog.get_input()
+        if new_cat:
+            self._set_project_category(project_name, new_cat.strip())
 
 
     def deactivate_project(self, name):
@@ -1447,20 +2193,47 @@ class ProjectManagerApp(ctk.CTk):
         self._start_remote_agent()
 
     def _start_remote_agent(self):
-        agent_script = os.path.join(BASE_DIR, "src", "remote_agent.py")
-        if os.path.exists(agent_script):
-            self.log("🚀 Starting Remote Agent...")
-            threading.Thread(target=self._run_agent_worker, args=(agent_script,), daemon=True).start()
+        agent_cmd = None
 
-    def _run_agent_worker(self, script):
+        # Prefer packaged agent when running from a bundled exe.
+        if getattr(sys, "frozen", False):
+            agent_candidates = [
+                os.path.join(BASE_DIR, "OmniRemoteAgent.exe"),
+                os.path.join(BASE_DIR, "OmniRemoteAgentPortable.exe"),
+            ]
+            for candidate in agent_candidates:
+                if os.path.exists(candidate):
+                    agent_cmd = [candidate]
+                    break
+
+        # Fallback to Python script in source mode.
+        if agent_cmd is None:
+            agent_script = os.path.join(BASE_DIR, "src", "remote_agent.py")
+            if os.path.exists(agent_script):
+                agent_cmd = [sys.executable, agent_script]
+
+        if agent_cmd:
+            self.log("🚀 Starting Remote Agent...")
+            threading.Thread(target=self._run_agent_worker, args=(agent_cmd,), daemon=True).start()
+        else:
+            self.log("⚠️ Remote Agent not found.", "red")
+
+    def _run_agent_worker(self, agent_cmd):
         try:
             import subprocess
-            # Start the agent as a subprocess
-            self.agent_process = subprocess.Popen([sys.executable, script], 
-                                                stdout=subprocess.PIPE, 
-                                                stderr=subprocess.STDOUT,
-                                                text=True,
-                                                bufsize=1)
+            # Start the agent as a subprocess with no window on Windows
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+                
+            self.agent_process = subprocess.Popen(
+                agent_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags
+            )
             # Log output in real-time
             for line in self.agent_process.stdout:
                 if "listening on" in line or "error" in line.lower():
@@ -1487,18 +2260,41 @@ class ProjectManagerApp(ctk.CTk):
         self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled")
 
     def on_close(self):
+        self._minimize_to_tray()
+
+    def _minimize_to_tray(self):
+        if not self.tray_icon:
+            self._start_tray_icon()
+        try:
+            if getattr(self, "login_window", None) and self.login_window.winfo_exists():
+                self.login_window.withdraw()
+        except Exception:
+            pass
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+
+    def exit_app(self):
         if os.getenv(PORTABLE_AUTO_CLEAN_ENV, "").strip() == "1":
             self._schedule_self_cleanup()
-        if self.tray_icon: self.tray_icon.stop()
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+            self.tray_icon = None
         self.quit()
 
     def _start_tray_icon(self):
+        if self.tray_icon:
+            return
         try:
             img = Image.open(ICON_PATH)
             items = [pystray.MenuItem("Show", lambda i, it: self.queue.put("deiconify"))]
             if self._is_portable_mode():
                 items.append(pystray.MenuItem("Deactivate + Cleanup", lambda i, it: self.deactivate_all_projects(cleanup=True, quit_after=True)))
-            items.append(pystray.MenuItem("Quit", lambda i, it: self.queue.put("quit")))
+            items.append(pystray.MenuItem("Exit", lambda i, it: self.queue.put("quit")))
             self.tray_icon = pystray.Icon("OmniSync", img, menu=pystray.Menu(*items))
             import threading
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
@@ -1507,7 +2303,41 @@ class ProjectManagerApp(ctk.CTk):
         d=ctk.CTkInputDialog(text="Name:", title="New Project"); bring_to_front(d, self); n=d.get_input() 
         if n: os.makedirs(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), n), exist_ok=True); self._refresh_projects()
 
+    def _ensure_visible(self):
+        try:
+            self.update_idletasks()
+            self.state("normal")
+            self.deiconify()
+            self.attributes("-alpha", 1.0)
+            w = max(self.winfo_width(), 360)
+            h = max(self.winfo_height(), 800)
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            x = max(0, int((sw - w) / 2))
+            y = max(0, int((sh - h) / 2))
+            self.geometry(f"{w}x{h}+{x}+{y}")
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after(200, lambda: self.attributes("-topmost", False))
+            log_startup("Ensured main window visible")
+        except Exception as e:
+            log_startup(f"Ensure visible failed: {e}")
+
 if __name__ == "__main__":
-    app = ProjectManagerApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_close)
-    app.mainloop()
+    try:
+        # Hide the console window even in source mode if the user wants a clean UI
+        hide_console_window()
+        log_startup("Starting OmniProjectSync...")
+        app = ProjectManagerApp()
+        app.protocol("WM_DELETE_WINDOW", app.on_close)
+        app.mainloop()
+    except Exception as e:
+        log_startup(f"FATAL: {e}")
+        log_startup(traceback.format_exc())
+        try:
+            import tkinter.messagebox as mb
+            mb.showerror("OmniProjectSync Error", str(e))
+        except Exception:
+            pass
+
+
