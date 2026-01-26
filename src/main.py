@@ -672,10 +672,17 @@ class SettingsWindow(ctk.CTkToplevel):
             
             # Special buttons for specific advanced fields
             if k == "REMOTE_ACCESS_TOKEN":
-                ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(2,0))
+                btn_gen = ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1")
+                btn_gen.pack(side="left", padx=(2,0))
+                ToolTip(btn_gen, "Generate new secure token")
             elif k == "REMOTE_PUBLIC_HOST":
-                ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(2,0))
-                ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(2,0))
+                btn_tun = ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316")
+                btn_tun.pack(side="left", padx=(2,0))
+                ToolTip(btn_tun, "Auto-detect Cloudflare Tunnel URL")
+
+                btn_lan = ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9")
+                btn_lan.pack(side="left", padx=(2,0))
+                ToolTip(btn_lan, "Auto-detect Local LAN IP")
 
         # Help text in advanced
         help_text = "Use Gen to create a secure token. Tun/LAN to auto-detect hosts.\nThese settings are usually managed automatically."
