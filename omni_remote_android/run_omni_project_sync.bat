@@ -20,6 +20,6 @@ if not exist "%EXE%" (
 
 pushd "%ROOT%dist"
 start "" "%EXE%"
-popdthe
+popd
 
 endlocal

@@ -8,6 +8,8 @@
         "Python.Python.3.12",
         "Google.CloudSDK",
         "Google.AndroidStudio",
-        "ARP\\Machine\\X64\\Android Studio"
-    ]
+        "ARP\\Machine\\X64\\Android Studio",
+        "Git.Git"
+    ],
+    "app_state_paths": []
 }

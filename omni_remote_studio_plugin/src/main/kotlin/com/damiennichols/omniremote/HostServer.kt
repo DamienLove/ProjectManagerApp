@@ -8,23 +8,40 @@ import com.google.cloud.firestore.SetOptions
 import com.google.firebase.cloud.FirestoreClient
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.wm.ToolWindowManager
+import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 import io.javalin.Javalin
+import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import java.awt.Component
+import java.awt.Container
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
-import java.util.concurrent.ConcurrentHashMap
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.URI
 
 data class CommandRequest(val cmd: String, val cwd: String?)
 data class CommandResponse(val output: String, val exitCode: Int)
 data class ProjectInfo(val name: String, val path: String)
 
+
+class TerminalSession(
+    val id: String,
+    val project: Project?,
+    val process: Process,
+    val outputThread: Thread
+)
+
 class HostServer(private val project: Project, private val onLog: (String) -> Unit) {
 
     private var server: Javalin? = null
     private val objectMapper = ObjectMapper()
+    private val sessions = ConcurrentHashMap<String, TerminalSession>()
     private val defaultFirebaseProjectId = "omniremote-e7afd"
-    private val sessions = ConcurrentHashMap<String, Process>()
 
     fun start(port: Int, token: String) {
         if (server != null) {
@@ -43,6 +60,27 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 }
             }
 
+            
+            get("/api/projects") { ctx ->
+                val projects = ProjectManager.getInstance().openProjects.map { p ->
+                    val toolWindow = ToolWindowManager.getInstance(p).getToolWindow("Terminal")
+                    val tabs = toolWindow?.contentManager?.contents?.map { it.displayName } ?: emptyList<String>()
+                    mapOf("name" to p.name, "path" to p.basePath, "tabs" to tabs)
+                }
+                ctx.json(mapOf("projects" to projects))
+            }
+
+            post("/api/close-project") { ctx ->
+                val name = ctx.queryParam("name")
+                val projectToClose = ProjectManager.getInstance().openProjects.find { it.name == name }
+                if (projectToClose != null) {
+                    ProjectManager.getInstance().closeProject(projectToClose)
+                    ctx.json(mapOf("status" to "closing"))
+                } else {
+                    ctx.status(404).result("Project not found")
+                }
+            }
+
             get("/api/health") { ctx ->
                 ctx.json(mapOf("status" to "ok"))
             }
@@ -54,6 +92,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 ctx.json(response)
             }
 
+            
             ws("/ws/terminal") { ws ->
                 ws.onConnect { ctx ->
                     val requestToken = ctx.header("X-Omni-Token") ?: ctx.queryParam("token")
@@ -66,107 +105,110 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
                 ws.onMessage { ctx ->
                     val message = ctx.message()
-                    // onLog("Terminal message: $message")
                     try {
                         val data = objectMapper.readValue(message, Map::class.java)
                         val type = data["type"] as? String
 
                         when (type) {
                             "run" -> {
-                                val cmd = data["cmd"] as? String ?: return@onMessage
+                                val projectName = data["project"] as? String
+                                val tabName = data["tab"] as? String
+                                val cmd = data["cmd"] as? String ?: "powershell.exe"
                                 val cwd = data["cwd"] as? String
-                                onLog("Terminal command: $cmd")
+                                
+                                val targetProject = if (projectName != null && projectName != "System") {
+                                    ProjectManager.getInstance().openProjects.find { it.name == projectName }
+                                } else null
+                                
+                                // If a tab is specified, try to find it and send the command
+                                if (targetProject != null && tabName != null && tabName.isNotBlank()) {
+                                    val toolWindow = ToolWindowManager.getInstance(targetProject).getToolWindow("Terminal")
+                                    val content = toolWindow?.contentManager?.contents?.find { it.displayName == tabName }
+                                    if (content != null) {
+                                        // Attempt to get the terminal widget and send the command
+                                        // This varies by version, but often the component itself or a subcomponent
+                                        val component = content.component
+                                        // Try to find ShellTerminalWidget in the hierarchy
+                                        val widget = findTerminalWidget(component)
+                                        if (widget != null) {
+                                            widget.executeCommand(cmd)
+                                            ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                "type" to "output",
+                                                "data" to "Sent to tab: $tabName\n"
+                                            )))
+                                            return@onMessage
+                                        }
+                                    }
+                                }
 
-                                val process = ProcessBuilder(parseCommand(cmd))
-                                    .directory(cwd?.let { java.io.File(it) } ?: project.basePath?.let { java.io.File(it) })
-                                    .redirectErrorStream(true)
-                                    .start()
+                                val workingDir = cwd?.let { File(it) } 
+                                    ?: targetProject?.basePath?.let { File(it) }
+                                    ?: project.basePath?.let { File(it) }
 
-                                val sessionId = java.util.UUID.randomUUID().toString()
-                                sessions[sessionId] = process
-
+                                val pb = ProcessBuilder(parseCommand(cmd))
+                                if (workingDir != null && workingDir.exists()) pb.directory(workingDir)
+                                pb.redirectErrorStream(true)
+                                val proc = pb.start()
+                                
+                                val sid = UUID.randomUUID().toString()
+                                
+                                val thread = Thread { 
+                                    try {
+                                        val reader = proc.inputStream.bufferedReader()
+                                        val buffer = CharArray(1024)
+                                        var charsRead: Int
+                                        while (reader.read(buffer).also { charsRead = it } != -1) {
+                                            val output = String(buffer, 0, charsRead)
+                                            ctx.send(objectMapper.writeValueAsString(mapOf(
+                                                "type" to "output",
+                                                "sessionId" to sid,
+                                                "data" to output
+                                            )))
+                                        }
+                                    } catch (e: Exception) { } // TODO: Handle exceptions properly
+                                    
+                                    val exitCode = proc.waitFor()
+                                    ctx.send(objectMapper.writeValueAsString(mapOf(
+                                        "type" to "exit",
+                                        "sessionId" to sid,
+                                        "code" to exitCode.toString()
+                                    )))
+                                    sessions.remove(sid)
+                                }
+                                thread.start()
+                                
+                                val session = TerminalSession(sid, targetProject, proc, thread)
+                                sessions[sid] = session
+                                
                                 ctx.send(objectMapper.writeValueAsString(mapOf(
                                     "type" to "started",
-                                    "sessionId" to sessionId
+                                    "sessionId" to sid,
+                                    "project" to (targetProject?.name ?: "System")
                                 )))
-
-                                Thread {
-                                    try {
-                                        val reader = process.inputStream.bufferedReader()
-                                        val buffer = CharArray(1024)
-                                        var read: Int
-                                        while (process.isAlive || process.inputStream.available() > 0) {
-                                            read = reader.read(buffer)
-                                            if (read == -1) break
-                                            if (read > 0) {
-                                                val chunk = String(buffer, 0, read)
-                                                try {
-                                                    ctx.send(objectMapper.writeValueAsString(mapOf(
-                                                        "type" to "output",
-                                                        "sessionId" to sessionId,
-                                                        "data" to chunk
-                                                    )))
-                                                } catch (e: Exception) {
-                                                    break
-                                                }
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                         // ignore
-                                    } finally {
-                                        val exitCode = try { process.waitFor() } catch(e:Exception) { -1 }
-                                        try {
-                                            ctx.send(objectMapper.writeValueAsString(mapOf(
-                                                "type" to "exit",
-                                                "sessionId" to sessionId,
-                                                "code" to exitCode.toString()
-                                            )))
-                                        } catch(e:Exception) {}
-                                        sessions.remove(sessionId)
-                                    }
-                                }.start()
                             }
                             "stdin" -> {
-                                val sessionId = data["sessionId"] as? String
-                                val inputData = data["data"] as? String
-                                if (sessionId != null && inputData != null) {
-                                    val proc = sessions[sessionId]
-                                    if (proc != null) {
-                                        try {
-                                            val writer = proc.outputStream.bufferedWriter()
-                                            writer.write(inputData)
-                                            writer.flush()
-                                        } catch (e: Exception) {
-                                            onLog("Failed to write to stdin: ${e.message}")
-                                        }
-                                    }
+                                val sid = data["sessionId"] as? String ?: return@onMessage
+                                val input = data["data"] as? String ?: ""
+                                val session = sessions[sid]
+                                if (session != null) {
+                                    session.process.outputStream.write(input.toByteArray())
+                                    session.process.outputStream.flush()
                                 }
                             }
                             "cancel" -> {
-                                val sessionId = data["sessionId"] as? String
-                                if (sessionId != null) {
-                                    sessions[sessionId]?.destroy()
-                                }
-                            }
-                            else -> {
-                                ctx.send(objectMapper.writeValueAsString(mapOf(
-                                    "type" to "error",
-                                    "message" to "Unknown message type: $type"
-                                )))
+                                val sid = data["sessionId"] as? String ?: return@onMessage
+                                sessions[sid]?.process?.destroy()
                             }
                         }
                     } catch (e: Exception) {
-                        ctx.send(objectMapper.writeValueAsString(mapOf(
-                            "type" to "error",
-                            "message" to (e.message ?: "Unknown error")
-                        )))
+                        onLog("WS Error: ${e.message}")
                     }
                 }
 
                 ws.onClose { ctx ->
                     onLog("Terminal disconnected")
-                    sessions.values.forEach { try { it.destroy() } catch(e:Exception){} }
-                    sessions.clear()
+                    // We don't automatically kill sessions on close to allow re-attach if needed?
+                    // For now, let's keep it simple and clean up.
                 }
             }
         }.start(port)
@@ -177,8 +219,6 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
     fun stop() {
         server?.stop()
         server = null
-        sessions.values.forEach { try { it.destroy() } catch(e:Exception){} }
-        sessions.clear()
         onLog("Host server stopped.")
     }
 
@@ -196,12 +236,14 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 val parts = docPath.split('/')
                 val collection = parts[0]
                 val userDocId = parts[1]
+                val publicHost = resolvePublicHost(env)
                 val data = mapOf(
-                    "host" to (System.getenv("REMOTE_SYNC_HOST") ?: "127.0.0.1"),
+                    "host" to publicHost,
                     "pmPort" to port,
                     "idePort" to port,
                     "token" to token,
                     "updated_at" to com.google.cloud.Timestamp.now(),
+                    "secure" to isSecureHost(publicHost),
                     "agent" to "intellij-plugin"
                 )
                 // Write to root level (primary location for Android app)
@@ -275,10 +317,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
 
     private fun loadEnvFile(): Map<String, String> {
         val base = project.basePath ?: return emptyMap()
-        val envFile = File(base, "secrets.env")
-        if (!envFile.exists()) {
-            return emptyMap()
-        }
+        val envFile = findEnvFile(File(base)) ?: return emptyMap()
         val env = mutableMapOf<String, String>()
         envFile.readLines().forEach { line ->
             val trimmed = line.trim()
@@ -296,6 +335,64 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             }
         }
         return env
+    }
+
+    private fun resolvePublicHost(env: Map<String, String>): String {
+        val tunnelRaw = System.getenv("REMOTE_TUNNEL_URL")
+            ?: env["REMOTE_TUNNEL_URL"]
+        if (!tunnelRaw.isNullOrBlank()) {
+            val tunnelHost = normalizeHost(tunnelRaw)
+            if (tunnelHost.isNotBlank()) return tunnelHost
+        }
+        val raw = System.getenv("REMOTE_PUBLIC_HOST")
+            ?: env["REMOTE_PUBLIC_HOST"]
+            ?: ""
+        val normalized = normalizeHost(raw)
+        return if (normalized.isNotBlank()) normalized else getLocalIp()
+    }
+
+    private fun normalizeHost(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return try {
+                URI(trimmed).host ?: trimmed
+            } catch (_: Exception) {
+                trimmed
+            }
+        }
+        return trimmed
+    }
+
+    private fun getLocalIp(): String {
+        return try {
+            DatagramSocket().use { socket ->
+                socket.connect(InetAddress.getByName("8.8.8.8"), 53)
+                socket.localAddress.hostAddress
+            }
+        } catch (_: Exception) {
+            try {
+                InetAddress.getLocalHost().hostAddress ?: "127.0.0.1"
+            } catch (_: Exception) {
+                "127.0.0.1"
+            }
+        }
+    }
+
+    private fun isSecureHost(host: String): Boolean {
+        return host.isNotBlank() && !host.first().isDigit()
+    }
+
+    private fun findEnvFile(start: File): File? {
+        var dir: File? = start
+        repeat(5) {
+            val currentDir = dir ?: return null
+            val envFile = File(currentDir, "secrets.env")
+            if (envFile.exists()) {
+                return envFile
+            }
+            dir = currentDir.parentFile
+        }
+        return null
     }
 
     private fun executeCommand(command: String, workingDir: String?): CommandResponse {
@@ -333,5 +430,16 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             args.add(currentArg.toString())
         }
         return args
+    }
+
+    private fun findTerminalWidget(component: Component): ShellTerminalWidget? {
+        if (component is ShellTerminalWidget) return component
+        if (component is Container) {
+            for (child in component.components) {
+                val found = findTerminalWidget(child)
+                if (found != null) return found
+            }
+        }
+        return null
     }
 }
