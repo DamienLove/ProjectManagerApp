@@ -1,4 +1,14 @@
-## 2025-02-18 - Prevent Command Injection in Remote Agent
-**Vulnerability:** Unnecessary usage of `shell=True` in `subprocess` calls within `src/remote_agent.py` (`check_install_software` and `open_studio_project`).
-**Learning:** `shell=True` was used for executing known executables (`winget`, `studio64.exe`) where direct execution is safer and sufficient. This exposes the application to command injection if the arguments (e.g., project paths or software IDs) contain shell metacharacters.
-**Prevention:** Always default to `shell=False` (or omit the argument) when using `subprocess` functions unless shell features (pipes, redirection, wildcards) are explicitly required and inputs are strictly sanitized. For list arguments, `shell=False` is preferred.
+# Sentinel Journal
+
+This journal tracks critical security learnings and vulnerability patterns found in the codebase.
+
+## Format
+## YYYY-MM-DD - [Title]
+**Vulnerability:** [What you found]
+**Learning:** [Why it existed]
+**Prevention:** [How to avoid next time]
+
+## 2026-01-23 - Authentication Bypass via Empty Token
+**Vulnerability:** The remote agent allowed authentication bypass when `REMOTE_ACCESS_TOKEN` was empty (due to configuration failure) by providing an empty `X-Omni-Token`. Additionally, token comparison was vulnerable to timing attacks.
+**Learning:** Default empty strings for security-critical configuration variables can lead to fail-open scenarios. Relying on external services (Firebase) for token generation without a local fallback can leave the system insecure if the service fails.
+**Prevention:** Always ensure security tokens are initialized to a secure default or fail startup if missing. Use constant-time comparison (`secrets.compare_digest`) for all secret verifications.
