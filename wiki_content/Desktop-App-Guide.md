@@ -2,7 +2,7 @@
 
 The **Omni Project Sync** desktop application is your command center for managing local and cloud projects.
 
-## New Features (v4.7.0)
+## New Features (v4.7.1)
 
 ### ✅ Safer Defaults
 - **Auto-Fill Remote Port**: Leaving the Remote Port blank now defaults to `8765`, preventing agent startup errors.
