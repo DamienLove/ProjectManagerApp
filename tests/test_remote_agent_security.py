@@ -77,8 +77,8 @@ class TestRemoteAgentSecurity(unittest.TestCase):
                     self.fail(f"VULNERABILITY: shell=True detected in subprocess call: {cmd_list}")
 
     @patch("subprocess.Popen")
-    @patch("src.remote_agent.find_android_studio")
-    @patch("src.remote_agent.is_path_safe")
+    @patch("remote_agent.find_android_studio")
+    @patch("remote_agent.is_path_safe")
     @patch("os.path.exists")
     def test_open_studio_project_no_shell(self, mock_exists, mock_is_safe, mock_find_studio, mock_popen):
         """Test that open_studio_project does NOT use shell=True."""

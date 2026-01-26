@@ -199,7 +199,7 @@ fun OmniRemoteApp() {
         projectsLoaded = false
     }
 
-    fun connectWebSocket() {
+    fun connectWebSocketWithPort(portStr: String, allowFallback: Boolean) {
         val cleanHost = normalizedHost()
         val cleanToken = token.trim()
         if (cleanHost.isBlank() || cleanToken.isBlank()) {
@@ -207,7 +207,7 @@ fun OmniRemoteApp() {
             return
         }
         disconnectWebSocket()
-        val baseHost = buildBaseHost(idePort)
+        val baseHost = buildBaseHost(portStr)
         val scheme = if (secure) "wss" else "ws"
         val encodedToken = URLEncoder.encode(cleanToken, "UTF-8")
         val wsUrl = "$scheme://$baseHost/ws/terminal?token=$encodedToken"
@@ -260,11 +260,21 @@ fun OmniRemoteApp() {
                     activeSessionId = null
                     appendLine("[error] ${t.message}")
                 }
+                if (allowFallback && portStr != idePort && idePort.trim().isNotBlank()) {
+                    mainHandler.post {
+                        status = "fallback to IDE host"
+                        connectWebSocketWithPort(idePort, allowFallback = false)
+                    }
+                }
             }
         }
 
         socket = client.newWebSocket(request, listener)
         status = "connecting"
+    }
+
+    fun connectWebSocket() {
+        connectWebSocketWithPort(pmPort, allowFallback = true)
     }
 
     suspend fun fetchProjects() {

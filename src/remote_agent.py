@@ -24,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.6.0"
+VERSION = "4.7.1"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -46,6 +46,17 @@ CLOUD_REGISTRY_FILENAME = "project_registry.json"
 LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 
 load_dotenv(ENV_PATH)
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read integer env var with safe fallback for blank/invalid values."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def save_env_setting(key: str, value: str) -> None:
@@ -78,8 +89,8 @@ def save_env_setting(key: str, value: str) -> None:
 
 REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
 REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
-REMOTE_PORT = int(os.getenv("REMOTE_PORT", "8765"))
-IDE_PORT = int(os.getenv("IDE_PORT", "8766"))
+REMOTE_PORT = _int_env("REMOTE_PORT", 8765)
+IDE_PORT = _int_env("IDE_PORT", 8766)
 REMOTE_ACCESS_TOKEN = os.getenv("REMOTE_ACCESS_TOKEN", "")  # Will be fetched from Firebase
 REMOTE_SHELL = os.getenv("REMOTE_SHELL", "powershell.exe")
 REMOTE_DEFAULT_CWD = os.getenv("REMOTE_DEFAULT_CWD", BASE_DIR)
@@ -562,10 +573,13 @@ def save_registry(registry: Dict[str, str]) -> None:
 def compute_registry() -> Dict[str, str]:
     with _registry_lock:
         os.makedirs(LOCAL_WORKSPACE_ROOT, exist_ok=True)
-        local_folders = {
-            f for f in os.listdir(LOCAL_WORKSPACE_ROOT)
-            if os.path.isdir(os.path.join(LOCAL_WORKSPACE_ROOT, f))
-        }
+        local_folders = set()
+        # Optimization: Use os.scandir to avoid multiple system calls for isdir checks
+        with os.scandir(LOCAL_WORKSPACE_ROOT) as it:
+            for entry in it:
+                if entry.is_dir():
+                    local_folders.add(entry.name)
+
         registry = load_registry()
         original_registry = registry.copy()
 
@@ -662,12 +676,40 @@ def check_install_software(project_path: str) -> None:
                 log(f"Auto-install software: {app_id}")
                 subprocess.run([
                     "winget", "install", "-e", "--id", app_id, "--silent"
-                ], shell=False)
+                ])
         except Exception:
             pass
 
+def _is_same_file(src_path: str, dst_path: str) -> bool:
+    try:
+        src_stat = os.stat(src_path)
+        dst_stat = os.stat(dst_path)
+    except Exception:
+        return False
+    if src_stat.st_size != dst_stat.st_size:
+        return False
+    # Allow small timestamp drift across filesystems.
+    return abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
+
 def copy_tree(src: str, dst: str) -> None:
-    shutil.copytree(src, dst, dirs_exist_ok=True)
+    if not os.path.exists(src):
+        return
+    for root, _dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        dest_root = dst if rel == "." else os.path.join(dst, rel)
+        try:
+            os.makedirs(dest_root, exist_ok=True)
+        except Exception:
+            continue
+        for fname in files:
+            src_path = os.path.join(root, fname)
+            dst_path = os.path.join(dest_root, fname)
+            try:
+                if os.path.exists(dst_path) and _is_same_file(src_path, dst_path):
+                    continue
+                shutil.copy2(src_path, dst_path)
+            except Exception as e:
+                log(f"Copy failed: {src_path} -> {dst_path} ({e})")
 
 def find_android_studio() -> Optional[str]:
     candidates = [
@@ -689,7 +731,7 @@ def open_studio_project(name: str) -> Dict[str, str]:
     if not studio:
         return {"status": "error", "message": "Android Studio not found"}
     try:
-        subprocess.Popen([studio, project_path], shell=False)
+        subprocess.Popen([studio, project_path])
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": "Studio launched"}
@@ -769,14 +811,24 @@ async def start_ide_proxy_session(loop: asyncio.AbstractEventLoop, ws: WebSocket
     async def relay():
         try:
             async for msg in ide_ws:
-                data = json.loads(msg)
-                if data.get("type") == "started":
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    await ws.send_text(msg)
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "started":
                     session.ide_session_id = data.get("sessionId")
-                
-                # Relay to client
-                await ws.send_text(msg)
-                
-                if data.get("type") == "exit":
+                    # Agent already emitted a "started" with its own sessionId.
+                    continue
+
+                if "sessionId" in data:
+                    data["sessionId"] = session_id
+
+                await ws.send_text(json.dumps(data))
+
+                if msg_type == "exit":
                     break
         except Exception:
             pass

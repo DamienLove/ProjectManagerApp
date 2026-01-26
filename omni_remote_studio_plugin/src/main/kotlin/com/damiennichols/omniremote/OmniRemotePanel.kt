@@ -6,6 +6,9 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.FirestoreClient
 import com.google.gson.Gson
+import com.intellij.credentialStore.CredentialAttributes
+import com.intellij.credentialStore.Credentials
+import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -89,6 +92,8 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         loadSettings()
         add(buildConfigTabs(), BorderLayout.NORTH)
         add(buildContentTabs(), BorderLayout.CENTER)
+        autoLoginIfPossible()
+        autoStartHostIfConfigured()
     }
 
     private fun buildConfigTabs(): JTabbedPane {
@@ -752,6 +757,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
             if (response.statusCode() == 200) {
                 val data = gson.fromJson(response.body(), Map::class.java)
                 val uid = data["localId"] as? String
+                val refreshToken = data["refreshToken"] as? String
                 val owner = email.equals("me@damiennichols.com", ignoreCase = true) ||
                     email.equals("damien@dmnlat.com", ignoreCase = true)
                 SwingUtilities.invokeLater {
@@ -769,9 +775,13 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                     props.setValue("omniremote.firebaseEmail", email)
                     saveSettings()
                 }
+                if (!refreshToken.isNullOrBlank()) {
+                    saveRefreshToken(email, refreshToken)
+                }
                 if (!uid.isNullOrBlank()) {
                     syncLoginRoleToFirestore(uid, email, owner)
                 }
+                autoStartHost()
             } else {
                 val errorMessage = parseFirebaseAuthError(response.body())
                 updateLoginStatus("Login failed: $errorMessage")
@@ -850,6 +860,103 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
 
     private fun runInBackground(task: () -> Unit) {
         ApplicationManager.getApplication().executeOnPooledThread(task)
+    }
+
+    private fun autoLoginIfPossible() {
+        val email = loginEmailField.text.trim()
+        if (email.isBlank()) {
+            return
+        }
+        val refreshToken = loadRefreshToken(email) ?: return
+        updateLoginStatus("Restoring session...")
+        runInBackground { performFirebaseRefreshLogin(email, refreshToken) }
+    }
+
+    private fun autoStartHostIfConfigured() {
+        val token = String(hostTokenField.password).trim()
+        if (token.isBlank()) {
+            return
+        }
+        val savedEmail = props.getValue("omniremote.firebaseEmail", "")
+        val savedUid = props.getValue("omniremote.firebaseUid", "")
+        if (savedEmail.isNotBlank() || savedUid.isNotBlank()) {
+            autoStartHost()
+        }
+    }
+
+    private fun refreshTokenAttributes(email: String): CredentialAttributes {
+        val service = "OmniRemote/firebase-refresh"
+        return CredentialAttributes(serviceName = service, userName = email)
+    }
+
+    private fun saveRefreshToken(email: String, refreshToken: String) {
+        try {
+            val attrs = refreshTokenAttributes(email)
+            PasswordSafe.instance.set(attrs, Credentials(email, refreshToken))
+        } catch (_: Exception) {
+            // Ignore PasswordSafe errors to avoid blocking login.
+        }
+    }
+
+    private fun loadRefreshToken(email: String): String? {
+        return try {
+            PasswordSafe.instance.get(refreshTokenAttributes(email))?.password?.toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun clearRefreshToken(email: String) {
+        try {
+            PasswordSafe.instance.set(refreshTokenAttributes(email), null)
+        } catch (_: Exception) {
+            // ignore
+        }
+    }
+
+    private fun performFirebaseRefreshLogin(email: String, refreshToken: String) {
+        val apiKey = resolveFirebaseApiKey()
+        if (apiKey.isBlank()) {
+            updateLoginStatus("Firebase API key missing")
+            return
+        }
+        val url = "https://securetoken.googleapis.com/v1/token?key=$apiKey"
+        val body = "grant_type=refresh_token&refresh_token=" + URLEncoder.encode(refreshToken, "UTF-8")
+        val request = HttpRequest.newBuilder(URI.create(url))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) {
+                val data = gson.fromJson(response.body(), Map::class.java)
+                val uid = data["user_id"] as? String
+                val newRefreshToken = data["refresh_token"] as? String
+                SwingUtilities.invokeLater {
+                    if (loginEmailField.text.trim().isBlank()) {
+                        loginEmailField.text = email
+                    }
+                    if (!uid.isNullOrBlank()) {
+                        firebaseDocPathField.text = "users/$uid"
+                        props.setValue("omniremote.firebaseUid", uid)
+                        props.setValue("omniremote.firebaseDocPath", "users/$uid")
+                    }
+                    props.setValue("omniremote.firebaseEmail", email)
+                    loginStatusLabel.text = "Logged in as $email (auto)"
+                    saveSettings()
+                }
+                if (!newRefreshToken.isNullOrBlank()) {
+                    saveRefreshToken(email, newRefreshToken)
+                }
+                autoStartHost()
+            } else {
+                val errorMessage = parseFirebaseAuthError(response.body())
+                updateLoginStatus("Auto-login failed: $errorMessage")
+                clearRefreshToken(email)
+            }
+        } catch (e: Exception) {
+            updateLoginStatus("Auto-login error: ${e.message}")
+        }
     }
 
     private inner class TerminalListener : WebSocket.Listener {

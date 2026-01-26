@@ -74,7 +74,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 val name = ctx.queryParam("name")
                 val projectToClose = ProjectManager.getInstance().openProjects.find { it.name == name }
                 if (projectToClose != null) {
-                    com.intellij.openapi.wm.impl.ProjectFrameHelper.getFrameHelper(com.intellij.openapi.wm.WindowManager.getInstance().getFrame(projectToClose))?.close()
+                    ProjectManager.getInstance().closeProject(projectToClose)
                     ctx.json(mapOf("status" to "closing"))
                 } else {
                     ctx.status(404).result("Project not found")
@@ -157,7 +157,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                                         val reader = proc.inputStream.bufferedReader()
                                         val buffer = CharArray(1024)
                                         var charsRead: Int
-                                        while (reader.read(buffer).also { charsRead = it }) != -1) {
+                                        while (reader.read(buffer).also { charsRead = it } != -1) {
                                             val output = String(buffer, 0, charsRead)
                                             ctx.send(objectMapper.writeValueAsString(mapOf(
                                                 "type" to "output",
@@ -208,7 +208,7 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
                 ws.onClose { ctx ->
                     onLog("Terminal disconnected")
                     // We don't automatically kill sessions on close to allow re-attach if needed?
-                    # For now, let's keep it simple and clean up.
+                    // For now, let's keep it simple and clean up.
                 }
             }
         }.start(port)
