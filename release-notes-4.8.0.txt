@@ -1,0 +1,13 @@
+OmniProjectSync v4.8.0 Release Notes
+
+- Improved portable venv creation by detecting Python installations more robustly.
+- Added security test coverage for the remote agent.
+
+Assets:
+- OmniProjectSync.exe
+- OmniRemoteAgent.exe
+- OmniRemoteAgentPortable.exe
+- OmniRemoteAgentSetup.exe
+- AndroidStudioPlugin.zip
+- OmniProjectRemote.apk
+- secrets.env.template

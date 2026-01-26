@@ -7,19 +7,18 @@ Omni Project Remote allows you to control your workstation from your phone using
 1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
 2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
-## ?? Downloads (v4.7.1)
+## ?? Downloads (v4.8.0)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
-| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniProjectRemote.apk) | Mobile Client |
-| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/AndroidStudioPlugin.zip) | **Includes Host Mode** |
-| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniRemoteAgentSetup.exe) | Standalone Installer |
-| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniProjectSync.exe) | Main GUI (No-install) |
+| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.8.0/OmniProjectRemote.apk) | Mobile Client |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.8.0/AndroidStudioPlugin.zip) | **Includes Host Mode** |
+| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.8.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
+| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.8.0/OmniProjectSync.exe) | Main GUI (No-install) |
 
-## What's new in 4.7.1
-- **Unified Terminal Routing**: Android terminal now connects to OmniProjectSync by default and can switch into open Android Studio terminal tabs via the plugin.
-- **Plugin Auto-Login + Auto-Host**: IDE plugin restores Firebase login and auto-starts the host after restart (securely stored in PasswordSafe).
-- **Safer Defaults**: Blank ports auto-default to 8765/8766 instead of crashing the agent.
+## What's new in 4.8.0
+- **More reliable setup**: Improved portable venv creation by detecting Python installations more robustly.
+- **Security coverage**: Added new security tests for the remote agent.
 
 ## Quick Start
 

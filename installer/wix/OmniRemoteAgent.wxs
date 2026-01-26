@@ -3,7 +3,7 @@
   <Package
     Name="Omni Remote Agent"
     Manufacturer="Damien Nichols"
-    Version="4.7.0"
+    Version="4.8.0"
     UpgradeCode="52ed39bd-ca5b-436a-a9ae-692287e88ec7">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Omni Remote Agent is already installed." />

@@ -1,6 +1,6 @@
 [Setup]
 AppName=Omni Remote Agent
-AppVersion=4.7.0
+AppVersion=4.8.0
 DefaultDirName={pf}\OmniRemoteAgent
 DefaultGroupName=Omni Remote Agent
 UninstallDisplayIcon={app}\OmniRemoteAgent.exe
