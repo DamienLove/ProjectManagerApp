@@ -1,23 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
-import sys
-from PyInstaller.utils.hooks import collect_all
 
-datas = [('../assets', 'assets'), ('../config', 'config')]
-binaries = []
-hiddenimports = ['customtkinter', 'PIL', 'requests', 'firebase_admin', 'google.cloud.firestore', 'pystray']
-
-tmp_ret = collect_all('customtkinter')
-datas += tmp_ret[0]
-binaries += tmp_ret[1]
-hiddenimports += tmp_ret[2]
 
 a = Analysis(
-    ['../src/main.py'],
+    ['C:\\Projects\\ProjectManagerApp\\src\\main.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -40,11 +29,10 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['../assets/app_icon.ico'],
 )

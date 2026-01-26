@@ -10,6 +10,7 @@ The system consists of three decoupled components communicating over a secure RE
 
 ## 📖 Documentation Pages
 - **[[Installation Guide]]**
+- **[[Desktop App Guide]]**
 - **[[Android Client Guide]]**
 - **[[IDE Plugin Guide]]**
 - **[[Remote Agent Deep Dive]]**
