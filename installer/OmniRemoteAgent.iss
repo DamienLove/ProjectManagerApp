@@ -1,6 +1,6 @@
 [Setup]
 AppName=Omni Remote Agent
-AppVersion=4.4.0
+AppVersion=4.7.0
 DefaultDirName={pf}\OmniRemoteAgent
 DefaultGroupName=Omni Remote Agent
 UninstallDisplayIcon={app}\OmniRemoteAgent.exe
@@ -11,7 +11,7 @@ SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 
 [Files]
-Source: "..\dist\OmniRemoteAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\OmniRemoteAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Omni Remote Agent"; Filename: "{app}\OmniRemoteAgent.exe"

@@ -12,3 +12,5 @@ fastapi
 uvicorn
 google-cloud-firestore
 firebase-admin
+websockets
+httpx
