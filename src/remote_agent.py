@@ -613,6 +613,9 @@ def backup_external_resources(project_path: str) -> None:
     os.makedirs(assets_dir, exist_ok=True)
     restore_map = {}
     for p in data.get("external_paths", []):
+        if not is_path_safe(p):
+            log(f"Skipping unsafe external path: {p}")
+            continue
         if os.path.exists(p):
             pid = hashlib.md5(p.encode()).hexdigest()
             dest = os.path.join(assets_dir, pid)
@@ -637,6 +640,9 @@ def restore_external_resources(project_path: str) -> None:
     except Exception:
         return
     for pid, original_path in restore_map.items():
+        if not is_path_safe(original_path):
+            log(f"Skipping restore to unsafe path: {original_path}")
+            continue
         stored_path = os.path.join(assets_dir, pid)
         if os.path.exists(stored_path):
             log(f"Restore external resource: {original_path}")
