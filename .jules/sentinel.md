@@ -1,6 +1,4 @@
-# Sentinel's Journal
-
-## 2025-02-14 - Constant-time Token Comparison
-**Vulnerability:** The remote agent used simple string comparison (`token != REMOTE_ACCESS_TOKEN`) for authentication tokens. This is vulnerable to timing attacks, where an attacker can deduce the token byte-by-byte by measuring response times.
-**Learning:** Even internal or "local" tools can be exposed via tunnels (like the Cloudflare tunnel used here), making them accessible over the internet. Standard Python comparisons are not constant-time.
-**Prevention:** Always use `secrets.compare_digest()` for comparing sensitive strings like passwords, API keys, and tokens.
+## 2024-05-22 - [Timing Attack Prevention in Authentication]
+**Vulnerability:** The remote agent used standard string comparison (`!=`) to verify authentication tokens in `require_token_from_request` and `require_token_from_ws`.
+**Learning:** Standard string comparison returns as soon as a mismatch is found, allowing an attacker to deduce the token byte-by-byte by measuring response times.
+**Prevention:** Always use `secrets.compare_digest()` for comparing secrets (passwords, tokens, HMACs) to ensure constant-time comparison.
