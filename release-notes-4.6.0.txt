@@ -1,0 +1,8 @@
+## Highlights
+- Sync UI: Installed Apps manager (map apps to projects, auto-uninstall when unused).
+- Remote Agent: Cloudflare tunnel host auto-published to Firebase and saved to secrets.env.
+- Android Studio plugin host: resolves public host from tunnel/env, avoids 127.0.0.1.
+- Launchers: prefer packaged EXE (set USE_PYTHON=1 for source).
+
+## Assets
+- OmniProjectSync.exe, OmniRemoteAgent.exe / Portable, AndroidStudioPlugin.zip, OmniProjectRemote.apk, secrets.env.template

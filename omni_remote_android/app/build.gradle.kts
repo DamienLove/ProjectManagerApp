@@ -20,8 +20,8 @@ android {
         applicationId = "com.damiennichols.omniremote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "4.5.0"
+        versionCode = 11
+        versionName = "4.7.0"
     }
 
     signingConfigs {

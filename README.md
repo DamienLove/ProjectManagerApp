@@ -7,14 +7,19 @@ Omni Project Remote allows you to control your workstation from your phone using
 1.  **Standalone Agent (Python)**: A background service for 24/7 access to your workstation.
 2.  **IDE Integrated Host (Plugin)**: A server embedded directly in Android Studio / IntelliJ IDEA.
 
-## ?? Downloads (v4.3.0)
+## ?? Downloads (v4.7.1)
 
 | Component | Asset | Description |
 | :--- | :--- | :--- |
-| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.3.0/OmniProjectRemote.apk) | Mobile Client |
-| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.3.0/AndroidStudioPlugin.zip) | **New: Includes Host Mode** |
-| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.3.0/OmniRemoteAgentSetup.exe) | Standalone Installer |
-| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.3.0/OmniProjectSync.exe) | Main GUI (No-install) |
+| **Android App** | [OmniProjectRemote.apk](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniProjectRemote.apk) | Mobile Client |
+| **IDE Plugin** | [AndroidStudioPlugin.zip](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/AndroidStudioPlugin.zip) | **Includes Host Mode** |
+| **Remote Agent** | [OmniRemoteAgentSetup.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniRemoteAgentSetup.exe) | Standalone Installer |
+| **Remote Agent** | [OmniProjectSync.exe](https://github.com/DamienLove/ProjectManagerApp/releases/download/v4.7.1/OmniProjectSync.exe) | Main GUI (No-install) |
+
+## What's new in 4.7.1
+- **Unified Terminal Routing**: Android terminal now connects to OmniProjectSync by default and can switch into open Android Studio terminal tabs via the plugin.
+- **Plugin Auto-Login + Auto-Host**: IDE plugin restores Firebase login and auto-starts the host after restart (securely stored in PasswordSafe).
+- **Safer Defaults**: Blank ports auto-default to 8765/8766 instead of crashing the agent.
 
 ## Quick Start
 
@@ -24,8 +29,8 @@ Omni Project Remote allows you to control your workstation from your phone using
 - Go to the **Host Mode** tab, set a token, and click **Start Host**.
 
 ### 2. Standalone Agent
-- Download OmniRemoteAgentSetup.exe and follow the prompts.
-- Configure your secrets.env with a REMOTE_ACCESS_TOKEN.
+- Download OmniRemoteAgentSetup.exe and follow the prompts (or use OmniRemoteAgent.exe).
+- Configure your secrets.env with a REMOTE_ACCESS_TOKEN. Cloudflare tunnels will auto-update the public host.
 
 ### 3. Android App
 - Install OmniProjectRemote.apk on your phone.
