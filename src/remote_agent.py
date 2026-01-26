@@ -680,8 +680,36 @@ def check_install_software(project_path: str) -> None:
         except Exception:
             pass
 
+def _is_same_file(src_path: str, dst_path: str) -> bool:
+    try:
+        src_stat = os.stat(src_path)
+        dst_stat = os.stat(dst_path)
+    except Exception:
+        return False
+    if src_stat.st_size != dst_stat.st_size:
+        return False
+    # Allow small timestamp drift across filesystems.
+    return abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
+
 def copy_tree(src: str, dst: str) -> None:
-    shutil.copytree(src, dst, dirs_exist_ok=True)
+    if not os.path.exists(src):
+        return
+    for root, _dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        dest_root = dst if rel == "." else os.path.join(dst, rel)
+        try:
+            os.makedirs(dest_root, exist_ok=True)
+        except Exception:
+            continue
+        for fname in files:
+            src_path = os.path.join(root, fname)
+            dst_path = os.path.join(dest_root, fname)
+            try:
+                if os.path.exists(dst_path) and _is_same_file(src_path, dst_path):
+                    continue
+                shutil.copy2(src_path, dst_path)
+            except Exception as e:
+                log(f"Copy failed: {src_path} -> {dst_path} ({e})")
 
 def find_android_studio() -> Optional[str]:
     candidates = [
