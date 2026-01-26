@@ -1,0 +1,15 @@
+OmniProjectSync v4.7.0 Release Notes
+
+- Android terminal now routes through OmniProjectSync by default with IDE terminal fallback.
+- IDE plugin restores Firebase login automatically and can auto-start the host on launch.
+- Remote agent session IDs are normalized for IDE terminal proxying.
+- Blank Remote Port values now default safely to 8765/8766.
+
+Assets:
+- OmniProjectSync.exe
+- OmniRemoteAgent.exe
+- OmniRemoteAgentPortable.exe
+- OmniRemoteAgentSetup.exe
+- AndroidStudioPlugin.zip
+- OmniProjectRemote.apk
+- secrets.env.template

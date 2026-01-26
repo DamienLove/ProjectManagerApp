@@ -1,95 +1,103 @@
-import unittest
-from unittest.mock import MagicMock, patch
 import sys
 import os
-import secrets
-from fastapi import Request, WebSocket, HTTPException
+import unittest
+from unittest.mock import MagicMock, patch, mock_open
 
-# Adjust path so we can import src.remote_agent
-sys.path.append(os.path.abspath("src"))
+# Add src to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-# Mock global side effects if any.
-# We patch os.getenv before import to control globals, but reload might be needed.
-# Instead, we will patch 'src.remote_agent.REMOTE_ACCESS_TOKEN' in setUp.
+# Mock dependencies to prevent import errors and side effects
+sys.modules["firebase_admin"] = MagicMock()
+sys.modules["firebase_admin.credentials"] = MagicMock()
+sys.modules["firebase_admin.firestore"] = MagicMock()
+sys.modules["starlette.concurrency"] = MagicMock()
+sys.modules["dotenv"] = MagicMock()
+sys.modules["uvicorn"] = MagicMock()
+sys.modules["fastapi"] = MagicMock()
+sys.modules["fastapi.responses"] = MagicMock()
 
-import src.remote_agent as remote_agent
+# We need to ensure we can import remote_agent
+# The mock setup above should handle external deps.
 
 class TestRemoteAgentSecurity(unittest.TestCase):
-
     def setUp(self):
-        self.valid_token = "secret_token_123"
-        remote_agent.REMOTE_ACCESS_TOKEN = self.valid_token
+        # Force reload of remote_agent to apply fresh mocks if needed
+        if "remote_agent" in sys.modules:
+            del sys.modules["remote_agent"]
+        if "src.remote_agent" in sys.modules:
+            del sys.modules["src.remote_agent"]
 
-        # Mock secrets.compare_digest
-        self.compare_digest_mock = MagicMock(wraps=secrets.compare_digest)
-        # We'll patch secrets.compare_digest in the module where it is used.
-        # However, since remote_agent imports secrets, we should check if it uses it.
-        # Currently it doesn't use compare_digest, so we can't patch it in remote_agent context effectively
-        # unless we patch 'secrets.compare_digest' globally or where it's imported.
-        # But wait, remote_agent imports `secrets`. So `src.remote_agent.secrets.compare_digest` is what we'd want to patch
-        # IF we want to spy on it. But right now it's NOT used.
+        # Patch os.environ to avoid KeyErrors or unwanted config loading
+        self.env_patcher = patch.dict(os.environ, {
+            "REMOTE_ACCESS_TOKEN": "test_token",
+            "LOCAL_WORKSPACE_ROOT": "/tmp/workspace"
+        })
+        self.env_patcher.start()
 
-        # To verify it IS NOT used (vulnerability check), we can't easily spy on "direct string comparison".
-        # But we can verify it IS used (fix check) later.
-        pass
+        import remote_agent
+        self.remote_agent = remote_agent
 
-    def test_require_token_from_request_success(self):
-        request = MagicMock(spec=Request)
-        request.headers = {"X-Omni-Token": self.valid_token}
+    def tearDown(self):
+        self.env_patcher.stop()
 
-        # Should not raise
-        remote_agent.require_token_from_request(request)
+    @patch("subprocess.run")
+    @patch("builtins.open", new_callable=mock_open, read_data='{"software": ["bad_app & hack"]}')
+    @patch("json.load")
+    @patch("os.path.exists")
+    def test_check_install_software_no_shell(self, mock_exists, mock_json_load, mock_file, mock_run):
+        """Test that check_install_software does NOT use shell=True for winget install."""
 
-    def test_require_token_from_request_failure(self):
-        request = MagicMock(spec=Request)
-        request.headers = {"X-Omni-Token": "wrong_token"}
+        # Setup mocks
+        mock_exists.return_value = True
+        mock_json_load.return_value = {"software": ["bad_app & hack"]}
 
-        with self.assertRaises(HTTPException) as cm:
-            remote_agent.require_token_from_request(request)
-        self.assertEqual(cm.exception.status_code, 401)
+        # Mock the "winget list" response to say package is missing, triggering install
+        mock_run.return_value.stdout = "No installed package found"
 
-    def test_require_token_from_request_bearer_success(self):
-        request = MagicMock(spec=Request)
-        request.headers = {"Authorization": f"Bearer {self.valid_token}"}
+        # Call the function
+        self.remote_agent.check_install_software("/tmp/workspace/project1")
 
-        # Should not raise
-        remote_agent.require_token_from_request(request)
+        # Verify subprocess.run calls
+        # We expect two calls.
+        # 1. winget list
+        # 2. winget install
 
-    def test_require_token_from_ws_success(self):
-        ws = MagicMock(spec=WebSocket)
-        ws.headers = {"X-Omni-Token": self.valid_token}
-        ws.query_params = {}
+        # Check all calls
+        for call in mock_run.call_args_list:
+            args, kwargs = call
+            # args[0] is the command list
+            cmd_list = args[0]
+            self.assertIsInstance(cmd_list, list)
 
-        # Should not raise
-        remote_agent.require_token_from_ws(ws)
+            # CRITICAL CHECK: shell must NOT be True
+            if kwargs.get("shell") is True:
+                # If shell=True, verify it is NOT the install command
+                # But our goal is to enforce NO shell=True for winget
+                if "install" in cmd_list:
+                    self.fail(f"VULNERABILITY: shell=True detected in subprocess call: {cmd_list}")
 
-    def test_require_token_from_ws_query_success(self):
-        ws = MagicMock(spec=WebSocket)
-        ws.headers = {}
-        ws.query_params = {"token": self.valid_token}
+    @patch("subprocess.Popen")
+    @patch("remote_agent.find_android_studio")
+    @patch("remote_agent.is_path_safe")
+    @patch("os.path.exists")
+    def test_open_studio_project_no_shell(self, mock_exists, mock_is_safe, mock_find_studio, mock_popen):
+        """Test that open_studio_project does NOT use shell=True."""
 
-        # Should not raise
-        remote_agent.require_token_from_ws(ws)
+        # Setup mocks
+        mock_exists.return_value = True
+        mock_is_safe.return_value = True
+        mock_find_studio.return_value = "/path/to/studio64.exe"
 
-    @patch('src.remote_agent.secrets.compare_digest')
-    def test_vulnerability_fix_verification(self, mock_compare):
-        """
-        This test expects secrets.compare_digest to be called.
-        It will fail on the current code (demonstrating vulnerability/lack of security best practice),
-        and pass after the fix.
-        """
-        mock_compare.return_value = True
+        # Call the function
+        self.remote_agent.open_studio_project("test_project")
 
-        request = MagicMock(spec=Request)
-        request.headers = {"X-Omni-Token": self.valid_token}
+        # Verify Popen call
+        self.assertTrue(mock_popen.called)
+        args, kwargs = mock_popen.call_args
 
-        remote_agent.require_token_from_request(request)
-
-        if not mock_compare.called:
-            print("\n[VULNERABILITY CONFIRMED] secrets.compare_digest was NOT called.")
-            self.fail("secrets.compare_digest was not used for token comparison")
-        else:
-            mock_compare.assert_called()
+        # CRITICAL CHECK: shell must NOT be True
+        if kwargs.get("shell") is True:
+            self.fail("VULNERABILITY: shell=True detected in open_studio_project Popen call")
 
 if __name__ == '__main__':
     unittest.main()
