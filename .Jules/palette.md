@@ -1,3 +1,3 @@
-## 2024-05-22 - Password Visibility Toggle in CustomTkinter
-**Learning:** CustomTkinter's `CTkEntry` lacks built-in support for internal buttons or visibility toggles. Implementing a "Show Password" feature requires wrapping the entry and a toggle button within a `CTkFrame` and programmatically toggling the `show` attribute between `"*"` and `""`.
-**Action:** Use a wrapper `CTkFrame` pattern for any `CTkEntry` that requires internal controls or icons to ensure proper visual grouping and layout behavior.
+## 2024-05-22 - Login Password Visibility
+**Learning:** `customtkinter` Entry widgets support dynamic `show` attribute updates, allowing for seamless password visibility toggling.
+**Action:** When implementing password fields, always wrap them in a frame with a toggle button to improve usability and reduce input errors.
