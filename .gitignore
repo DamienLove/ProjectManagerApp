@@ -28,3 +28,12 @@ omni_remote_studio_plugin/build_plugin.log
 
 # Installer output
 installer/dist/
+
+# Secrets
+secrets/
+
+# Claude Code
+.claude/
+
+# Firebase cache
+.firebase/

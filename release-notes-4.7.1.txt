@@ -1,0 +1,12 @@
+OmniProjectSync v4.7.1 Release Notes
+
+- Faster deactivation: unchanged files are skipped during sync (size + mtime check).
+
+Assets:
+- OmniProjectSync.exe
+- OmniRemoteAgent.exe
+- OmniRemoteAgentPortable.exe
+- OmniRemoteAgentSetup.exe
+- AndroidStudioPlugin.zip
+- OmniProjectRemote.apk
+- secrets.env.template
