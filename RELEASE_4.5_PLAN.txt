@@ -1,0 +1,98 @@
+================================================================================
+OmniProjectSync v4.5.0 Release Plan - Zero-Config Connection System
+================================================================================
+
+GOAL: Fully automated connection between all modules (Agent, Android, Webapp)
+      with NO manual IP/token/host entry required by users.
+
+================================================================================
+COMPLETED
+================================================================================
+
+[x] Agent updated (src/remote_agent.py) with:
+    - Version bump to 4.5.0
+    - CloudflareTunnel class for auto-tunnel creation
+    - Auto-start cloudflared tunnel on startup
+    - Parse tunnel URL from cloudflared output
+    - get_or_create_shared_token() - fetches/creates token from Firebase
+    - Sync tunnel URL to Firebase on startup
+    - Mark as offline on shutdown
+    - Default REMOTE_BIND_HOST changed to 0.0.0.0
+    - startup_sequence() and shutdown_sequence() functions
+    - Health endpoint now includes tunnel URL
+
+================================================================================
+REMAINING TASKS
+================================================================================
+
+1. ANDROID APP (omni_remote_android/app/src/main/java/.../MainActivity.kt)
+   [ ] Handle port 443 for tunnel connections
+   [ ] Build URL correctly based on secure flag
+
+   Code change needed:
+   ```kotlin
+   // In fetchConnectionFromFirebase(), after getting config:
+   val secure = doc.getBoolean("secure") ?: false
+   val port = doc.getLong("pmPort")?.toInt() ?: 8765
+
+   // Build URL
+   val protocol = if (secure) "https" else "http"
+   val portSuffix = if (secure && port == 443) "" else ":$port"
+   val baseUrl = "$protocol://$host$portSuffix"
+   ```
+
+2. WEBAPP (webapp/public/index.html)
+   [ ] Show connection status (online/offline)
+   [ ] Display tunnel URL when available
+   [ ] Make settings read-only (auto-managed by agent)
+
+3. BUILD ALL MODULES
+   [ ] Build OmniRemoteAgent: pyinstaller --onefile --name OmniRemoteAgent src/remote_agent.py
+   [ ] Build Android APK: cd omni_remote_android && ./gradlew assembleRelease
+   [ ] Deploy Webapp: cd webapp && firebase deploy --only hosting
+
+4. CREATE GITHUB RELEASE
+   [ ] Tag: v4.5.0
+   [ ] Assets: OmniRemoteAgent.exe, app-release.apk
+   [ ] Release notes
+
+================================================================================
+ARCHITECTURE
+================================================================================
+
+Firebase Firestore is the central hub:
+  users/{uid}/
+    token: "shared-token"                      <- Shared across all modules
+    host: "random-abc.trycloudflare.com"       <- Auto-generated tunnel URL
+    pmPort: 443                                <- Tunnel uses HTTPS on 443
+    idePort: 443
+    secure: true                               <- Always true for tunnels
+    tunnelUrl: "https://random-abc.trycloudflare.com"
+    localIp: "192.168.1.x"                     <- Fallback for same network
+    localPort: 8765                            <- Local port
+    online: true                               <- Agent status
+    updated_at: timestamp
+
+Flow:
+1. Agent starts -> Creates Cloudflare quick tunnel -> Reports URL to Firebase
+2. Android/Webapp login -> Fetch connection info from Firebase -> Auto-connect
+3. All modules share the same token (generated once, stored in Firebase)
+
+================================================================================
+CLOUDFLARED DEPENDENCY
+================================================================================
+
+The agent requires cloudflared to be installed:
+- Download: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+- Windows: winget install Cloudflare.cloudflared
+- Or download exe directly and place next to agent
+
+The agent auto-detects cloudflared in these locations:
+- C:\Program Files (x86)\cloudflared\cloudflared.exe
+- C:\Program Files\cloudflared\cloudflared.exe
+- %LOCALAPPDATA%\cloudflared\cloudflared.exe
+- %USERPROFILE%\cloudflared\cloudflared.exe
+- Same directory as agent
+- PATH
+
+================================================================================

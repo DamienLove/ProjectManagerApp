@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni Remote - Setup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-top: #0B0F14;
+            --bg-bottom: #141A22;
+            --panel: #101820;
+            --panel-border: #1F2937;
+            --accent: #4ADE80;
+            --accent-alt: #38BDF8;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --text-primary: #E2E8F0;
+            --text-muted: #94A3B8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+            min-height: 100vh;
+            color: var(--text-primary);
+        }
+
+        .container {
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 24px 16px;
+        }
+
+        .header {
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .header .subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--bg-top);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-alt);
+        }
+
+        .form-group input::placeholder {
+            color: var(--text-muted);
+            opacity: 0.6;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: var(--panel-border);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle.active {
+            background: var(--accent);
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle.active::after {
+            transform: translateX(20px);
+        }
+
+        .toggle-label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .btn-secondary {
+            background: var(--accent-alt);
+            color: #000;
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: #000;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+
+        .status-text {
+            font-size: 13px;
+        }
+
+        .status-text.success {
+            color: var(--accent);
+        }
+
+        .status-text.warning {
+            color: var(--warning);
+        }
+
+        .status-text.error {
+            color: var(--danger);
+        }
+
+        .user-email {
+            font-size: 13px;
+            color: var(--accent);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--panel-border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .info-text {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+
+        .success-message {
+            padding: 12px 16px;
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            color: var(--accent);
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .error-message {
+            padding: 12px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
+            border-radius: 8px;
+            color: var(--danger);
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--panel-border);
+            margin: 20px 0;
+        }
+
+        @media (max-width: 400px) {
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+            .btn-row {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Omni Remote</h1>
+            <p class="subtitle">Configure your connection settings</p>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-view" class="loading">
+            <div class="spinner"></div>
+        </div>
+
+        <!-- Login View -->
+        <div id="login-view" class="hidden">
+            <div class="card">
+                <h2 class="card-title">Sign In</h2>
+                <p class="info-text">Sign in with your Firebase account to configure your connection settings. Use the same account as your Android app.</p>
+
+                <div id="login-error" class="error-message hidden"></div>
+
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" placeholder="you@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Your password">
+                </div>
+
+                <div class="toggle-row">
+                    <div class="toggle" id="show-password-toggle"></div>
+                    <span class="toggle-label">Show password</span>
+                </div>
+
+                <button class="btn btn-primary" id="sign-in-btn">Sign In</button>
+            </div>
+        </div>
+
+        <!-- Main View (Authenticated) -->
+        <div id="main-view" class="hidden">
+            <div class="status-bar">
+                <span class="user-email" id="user-email"></span>
+                <span id="agent-status" class="status-text warning hidden">● Checking Status...</span>
+                <button class="btn btn-warning" id="sign-out-btn" style="padding: 8px 16px; font-size: 12px;">Sign Out</button>
+            </div>
+
+            <div id="save-success" class="success-message hidden">Settings saved! Your Android app will auto-connect with these settings.</div>
+            <div id="save-error" class="error-message hidden"></div>
+
+            <div class="card">
+                <h2 class="card-title">Connection Settings</h2>
+                <p class="info-text">Configure your OmniRemote Agent connection. These settings will sync to your Android app automatically.</p>
+
+                <div id="tunnel-info" class="success-message hidden" style="word-break: break-all;">
+                    <strong>✨ Auto-Tunnel Active</strong><br>
+                    <span id="tunnel-url" style="font-size: 12px; opacity: 0.9;"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="host">Host Address</label>
+                    <input type="text" id="host" placeholder="192.168.1.100 or yourdomain.com">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="pm-port">PM Port</label>
+                        <input type="text" id="pm-port" placeholder="8765">
+                    </div>
+                    <div class="form-group">
+                        <label for="ide-port">IDE Port</label>
+                        <input type="text" id="ide-port" placeholder="8766">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="token">Authentication Token</label>
+                    <input type="password" id="token" placeholder="Your secret token">
+                </div>
+
+                <div class="toggle-row">
+                    <div class="toggle" id="show-token-toggle"></div>
+                    <span class="toggle-label">Show token</span>
+                </div>
+
+                <div class="toggle-row">
+                    <div class="toggle" id="secure-toggle"></div>
+                    <span class="toggle-label">Secure connection (HTTPS/WSS)</span>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="btn-row">
+                    <button class="btn btn-primary" id="save-btn">Save Settings</button>
+                    <button class="btn btn-secondary" id="test-btn">Test Connection</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">How It Works</h2>
+                <p class="info-text">
+                    1. Enter your OmniRemote Agent host and credentials above<br>
+                    2. Click "Save Settings" to store them securely in the cloud<br>
+                    3. Open the Omni Remote Android app and sign in<br>
+                    4. The app will automatically load your settings and connect!
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyBGgw8JqsMuQdW7lhn3KtlJVQwv9Eass0Y",
+            authDomain: "omniremote-e7afd.firebaseapp.com",
+            projectId: "omniremote-e7afd",
+            storageBucket: "omniremote-e7afd.firebasestorage.app",
+            messagingSenderId: "438106999202",
+            appId: "1:438106999202:web:e9a275b4279221619dcafb",
+            measurementId: "G-QWHTKJJQ89"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // DOM Elements
+        const loadingView = document.getElementById('loading-view');
+        const loginView = document.getElementById('login-view');
+        const mainView = document.getElementById('main-view');
+
+        const loginEmail = document.getElementById('login-email');
+        const loginPassword = document.getElementById('login-password');
+        const loginError = document.getElementById('login-error');
+        const showPasswordToggle = document.getElementById('show-password-toggle');
+        const signInBtn = document.getElementById('sign-in-btn');
+
+        const userEmailSpan = document.getElementById('user-email');
+        const agentStatusSpan = document.getElementById('agent-status');
+        const signOutBtn = document.getElementById('sign-out-btn');
+
+        const tunnelInfo = document.getElementById('tunnel-info');
+        const tunnelUrlSpan = document.getElementById('tunnel-url');
+
+        const hostInput = document.getElementById('host');
+        const pmPortInput = document.getElementById('pm-port');
+        const idePortInput = document.getElementById('ide-port');
+        const tokenInput = document.getElementById('token');
+        const showTokenToggle = document.getElementById('show-token-toggle');
+        const secureToggle = document.getElementById('secure-toggle');
+        const saveBtn = document.getElementById('save-btn');
+        const testBtn = document.getElementById('test-btn');
+        const saveSuccess = document.getElementById('save-success');
+        const saveError = document.getElementById('save-error');
+
+        // Toggle helpers
+        function setupToggle(toggle, inputEl) {
+            toggle.addEventListener('click', () => {
+                toggle.classList.toggle('active');
+                if (inputEl) {
+                    inputEl.type = toggle.classList.contains('active') ? 'text' : 'password';
+                }
+            });
+        }
+
+        function setupBooleanToggle(toggle) {
+            toggle.addEventListener('click', () => {
+                toggle.classList.toggle('active');
+            });
+        }
+
+        setupToggle(showPasswordToggle, loginPassword);
+        setupToggle(showTokenToggle, tokenInput);
+        setupBooleanToggle(secureToggle);
+
+        // Auth state listener
+        onAuthStateChanged(auth, async (user) => {
+            loadingView.classList.add('hidden');
+
+            if (user) {
+                loginView.classList.add('hidden');
+                mainView.classList.remove('hidden');
+                userEmailSpan.textContent = user.email;
+
+                // Load existing config
+                subscribeToConfig(user.uid);
+            } else {
+                loginView.classList.remove('hidden');
+                mainView.classList.add('hidden');
+                if (unsubscribeConfig) unsubscribeConfig();
+            }
+        });
+
+        let unsubscribeConfig = null;
+
+        // Subscribe to config from Firestore
+        function subscribeToConfig(uid) {
+            if (unsubscribeConfig) unsubscribeConfig();
+
+            const docRef = doc(db, 'users', uid);
+            
+            unsubscribeConfig = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    
+                    // Update form fields if not focused
+                    if (document.activeElement !== hostInput && data.host) hostInput.value = data.host;
+                    if (document.activeElement !== pmPortInput && data.pmPort) pmPortInput.value = data.pmPort;
+                    if (document.activeElement !== idePortInput && data.idePort) idePortInput.value = data.idePort;
+                    if (document.activeElement !== tokenInput && data.token) tokenInput.value = data.token;
+                    
+                    if (data.secure) secureToggle.classList.add('active');
+                    else secureToggle.classList.remove('active');
+
+                    // Update Status
+                    agentStatusSpan.classList.remove('hidden');
+                    if (data.online) {
+                        agentStatusSpan.textContent = '● Agent Online';
+                        agentStatusSpan.className = 'status-text success';
+                    } else {
+                        agentStatusSpan.textContent = '● Agent Offline';
+                        agentStatusSpan.className = 'status-text error';
+                    }
+
+                    // Update Tunnel Info
+                    if (data.tunnelUrl) {
+                        tunnelInfo.classList.remove('hidden');
+                        tunnelUrlSpan.textContent = data.tunnelUrl;
+                        hostInput.disabled = true;
+                        pmPortInput.disabled = true;
+                        idePortInput.disabled = true;
+                        secureToggle.classList.add('active');
+                        // Make inputs look disabled
+                        hostInput.style.opacity = '0.7';
+                        pmPortInput.style.opacity = '0.7';
+                        idePortInput.style.opacity = '0.7';
+                    } else {
+                        tunnelInfo.classList.add('hidden');
+                        hostInput.disabled = false;
+                        pmPortInput.disabled = false;
+                        idePortInput.disabled = false;
+                        hostInput.style.opacity = '1';
+                        pmPortInput.style.opacity = '1';
+                        idePortInput.style.opacity = '1';
+                    }
+                }
+            }, (error) => {
+                console.error('Error listening to config:', error);
+            });
+        }
+
+        // Sign in
+        signInBtn.addEventListener('click', async () => {
+            const email = loginEmail.value.trim();
+            const password = loginPassword.value;
+
+            if (!email || !password) {
+                showError(loginError, 'Email and password required');
+                return;
+            }
+
+            signInBtn.disabled = true;
+            signInBtn.textContent = 'Signing in...';
+            loginError.classList.add('hidden');
+
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                loginPassword.value = '';
+            } catch (error) {
+                showError(loginError, error.message);
+            } finally {
+                signInBtn.disabled = false;
+                signInBtn.textContent = 'Sign In';
+            }
+        });
+
+        // Sign out
+        signOutBtn.addEventListener('click', async () => {
+            await signOut(auth);
+        });
+
+        // Save settings
+        saveBtn.addEventListener('click', async () => {
+            const user = auth.currentUser;
+            if (!user) return;
+
+            const host = hostInput.value.trim();
+            const token = tokenInput.value.trim();
+
+            if (!host || !token) {
+                showError(saveError, 'Host and token are required');
+                return;
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            saveSuccess.classList.add('hidden');
+            saveError.classList.add('hidden');
+
+            try {
+                const docRef = doc(db, 'users', user.uid);
+                await setDoc(docRef, {
+                    host: host,
+                    pmPort: pmPortInput.value.trim() || '8765',
+                    idePort: idePortInput.value.trim() || '8766',
+                    token: token,
+                    secure: secureToggle.classList.contains('active'),
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+
+                saveSuccess.classList.remove('hidden');
+                setTimeout(() => saveSuccess.classList.add('hidden'), 5000);
+            } catch (error) {
+                showError(saveError, error.message);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Settings';
+            }
+        });
+
+        // Test connection
+        testBtn.addEventListener('click', async () => {
+            const host = hostInput.value.trim();
+            const token = tokenInput.value.trim();
+            const pmPort = pmPortInput.value.trim() || '8765';
+            const secure = secureToggle.classList.contains('active');
+
+            if (!host || !token) {
+                showError(saveError, 'Host and token are required to test');
+                return;
+            }
+
+            testBtn.disabled = true;
+            testBtn.textContent = 'Testing...';
+            saveSuccess.classList.add('hidden');
+            saveError.classList.add('hidden');
+
+            const scheme = secure ? 'https' : 'http';
+            const url = `${scheme}://${host}:${pmPort}/api/projects`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'X-Omni-Token': token
+                    }
+                });
+
+                if (response.ok) {
+                    saveSuccess.textContent = 'Connection successful! Your agent is reachable.';
+                    saveSuccess.classList.remove('hidden');
+                } else {
+                    showError(saveError, `Connection failed: ${response.status} ${response.statusText}`);
+                }
+            } catch (error) {
+                showError(saveError, `Connection failed: ${error.message}. Make sure your agent is running and accessible.`);
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test Connection';
+            }
+        });
+
+        // Enter key handlers
+        loginEmail.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loginPassword.focus();
+        });
+        loginPassword.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') signInBtn.click();
+        });
+
+        function showError(element, message) {
+            element.textContent = message;
+            element.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
