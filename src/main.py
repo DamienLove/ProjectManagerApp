@@ -1455,18 +1455,26 @@ class ProjectManagerApp(ctk.CTk):
 
         PopupMenu(self, self.menu_btn, menu_items)
 
+    def _scan_folders(self, path):
+        """Efficiently list directories in a path using os.scandir."""
+        folders = set()
+        if path and os.path.exists(path):
+            try:
+                with os.scandir(path) as it:
+                    for entry in it:
+                        if entry.is_dir():
+                            folders.add(entry.name)
+            except Exception:
+                pass
+        return folders
+
     def _get_projects_snapshot(self):
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         drive_root = self._drive_root()
 
         # Scan folders to keep registry fresh without touching UI.
-        local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))} if os.path.exists(root) else set()
-        cloud_folders = set()
-        if drive_root and os.path.exists(drive_root):
-            try:
-                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
-            except Exception:
-                cloud_folders = set()
+        local_folders = self._scan_folders(root)
+        cloud_folders = self._scan_folders(drive_root)
 
         registry = {}
         registry.update(self._load_cloud_reg())
@@ -1856,14 +1864,10 @@ class ProjectManagerApp(ctk.CTk):
         hidden.extend(["$recycle.bin", CLOUD_META_DIRNAME.lower()])
 
         # 1. Scan Local
-        local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
+        local_folders = self._scan_folders(root)
 
         # 2. Scan Cloud (Drive)
-        cloud_folders = set()
-        if drive_root and os.path.exists(drive_root):
-            try:
-                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
-            except: pass
+        cloud_folders = self._scan_folders(drive_root)
 
         # 3. Build Registry
         registry = {}
