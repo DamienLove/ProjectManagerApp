@@ -1884,9 +1884,15 @@ class ProjectManagerApp(ctk.CTk):
         grouped = {"Uncategorized": []}
         for cat in categories: grouped[cat] = []
 
+        # ⚡ Bolt Optimization: Pre-calculate project->category map to avoid O(N) file reads
+        project_to_cat = {}
+        for cat, projs in categories.items():
+            for p in projs:
+                project_to_cat[p] = cat
+
         for name in sorted(registry.keys()):
             if name.lower() in hidden: continue
-            cat = self._get_project_category(name)
+            cat = project_to_cat.get(name, "Uncategorized")
             if cat not in grouped: grouped[cat] = []
             grouped[cat].append((name, registry[name]))
 
