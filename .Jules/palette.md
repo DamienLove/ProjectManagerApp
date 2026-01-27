@@ -5,3 +5,7 @@
 ## 2024-05-23 - Abbreviated Button Labels
 **Learning:** Abbreviated buttons (Gen, Tun, LAN) save space but confuse new users.
 **Action:** Always attach a `ToolTip` to explain the full function of abbreviated actions.
+
+## 2024-05-24 - Contextual Tooltips for Project Actions
+**Learning:** Users may hesitate to click destructive or obscure actions ("Deactivate", "AntiG") without reassurance.
+**Action:** Use tooltips not just for labels, but to explain *consequences* (e.g., "Offload to cloud & uninstall apps" instead of just "Deactivate").
