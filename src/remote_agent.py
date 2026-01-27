@@ -526,20 +526,24 @@ def is_path_safe(path: str) -> bool:
     if not path:
         return False
     abs_path = os.path.abspath(path)
-    # Always allow the workspace root and its children.
+
+    # 1. Blocklist: Check protected paths first (overrides allowlists)
+    for p_abs in ABS_PROTECTED_PATHS:
+        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
+            return False
+
+    # 2. Allowlist: Workspace root
     if abs_path == ABS_LOCAL_WORKSPACE_ROOT or abs_path.startswith(ABS_LOCAL_WORKSPACE_ROOT + os.sep):
         return True
-    # If allowed roots are defined, enforce them.
+
+    # 3. Allowlist: Explicitly allowed roots
     if ABS_REMOTE_ALLOWED_ROOTS:
         for root_abs in ABS_REMOTE_ALLOWED_ROOTS:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
-        return False
-    # Otherwise block only obviously dangerous roots.
-    for p_abs in ABS_PROTECTED_PATHS:
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
-    return True
+
+    # 4. Deny by default
+    return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
