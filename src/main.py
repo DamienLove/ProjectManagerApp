@@ -967,16 +967,16 @@ class ProjectCard(ctk.CTkFrame):
     def _populate_controls(self):
         # Re-create buttons every time to ensure fresh state/bindings
         if self.status == "Local":
-            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), color="gray", icon=self.app.icons.get("folder"))
-            self._btn("Studio", lambda: self.app.open_studio(self.name), color="#3DDC84", text_color="black", icon=self.app.icons.get("android_studio"))
-            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), color="#9333ea", icon=self.app.icons.get("antigravity"))
-            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), color="#64748b", icon=self.app.icons.get("config_cog"))
-            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), color="#ef4444", icon=self.app.icons.get("cloud"))
+            self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), color="gray", icon=self.app.icons.get("folder"), tooltip="Open local project folder")
+            self._btn("Studio", lambda: self.app.open_studio(self.name), color="#3DDC84", text_color="black", icon=self.app.icons.get("android_studio"), tooltip="Open in Android Studio")
+            self._btn("AntiG", lambda: self.app.open_antigravity(self.name), color="#9333ea", icon=self.app.icons.get("antigravity"), tooltip="Launch AntiGravity (Python Easter Egg)")
+            self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), color="#64748b", icon=self.app.icons.get("config_cog"), tooltip="Configure external paths & software")
+            self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), color="#ef4444", icon=self.app.icons.get("cloud"), tooltip="Offload project to cloud backup")
         else:
-            self._btn("Activate", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"))
-            self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"))
+            self._btn("Activate", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"), tooltip="Restore project to local workspace")
+            self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"), tooltip="Remove project from this list")
 
-    def _btn(self, txt, cmd, color=None, text_color=None, icon=None):
+    def _btn(self, txt, cmd, color=None, text_color=None, icon=None, tooltip=None):
         # Glassy Pill Style
         accent = color if color and color != "transparent" else "gray50"
         
@@ -998,6 +998,9 @@ class ProjectCard(ctk.CTkFrame):
         btn.pack(fill="x", pady=3, padx=5)
         if self.busy:
             btn.configure(state="disabled")
+
+        if tooltip:
+            ToolTip(btn, tooltip)
 
     def set_busy(self, is_busy):
         self.busy = is_busy
