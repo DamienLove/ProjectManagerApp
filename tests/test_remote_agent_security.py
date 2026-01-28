@@ -13,8 +13,23 @@ sys.modules["firebase_admin.firestore"] = MagicMock()
 sys.modules["starlette.concurrency"] = MagicMock()
 sys.modules["dotenv"] = MagicMock()
 sys.modules["uvicorn"] = MagicMock()
-sys.modules["fastapi"] = MagicMock()
+
+# Mock fastapi
+mock_fastapi = MagicMock()
+sys.modules["fastapi"] = mock_fastapi
 sys.modules["fastapi.responses"] = MagicMock()
+
+# Define Mock exceptions and classes
+class MockHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        self.status_code = status_code
+        self.detail = detail
+
+mock_fastapi.HTTPException = MockHTTPException
+mock_fastapi.Request = MagicMock
+mock_fastapi.WebSocket = MagicMock
+mock_fastapi.WebSocketDisconnect = Exception
+mock_fastapi.FastAPI = MagicMock
 
 # We need to ensure we can import remote_agent
 # The mock setup above should handle external deps.

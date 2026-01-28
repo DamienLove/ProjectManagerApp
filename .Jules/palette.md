@@ -1,7 +1,3 @@
-## 2024-05-22 - Login Password Visibility
-**Learning:** `customtkinter` Entry widgets support dynamic `show` attribute updates, allowing for seamless password visibility toggling.
-**Action:** When implementing password fields, always wrap them in a frame with a toggle button to improve usability and reduce input errors.
-
-## 2024-05-23 - Abbreviated Button Labels
-**Learning:** Abbreviated buttons (Gen, Tun, LAN) save space but confuse new users.
-**Action:** Always attach a `ToolTip` to explain the full function of abbreviated actions.
+## 2024-05-23 - Tooltip Implementation Strategy
+**Learning:** Abbreviated buttons (like "AntiG") in dense UIs are a recurring pattern here. Users often hesitate to click them. The `ToolTip` class in `src/main.py` is a lightweight, reusable solution that doesn't require new dependencies.
+**Action:** When adding or modifying compact button layouts, always attach the `ToolTip` class to provide context. The pattern `ToolTip(widget, text)` is simple and should be standard for all icon-only or abbreviated controls.
