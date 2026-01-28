@@ -75,7 +75,9 @@ class TestRemoteAgentAuth(unittest.TestCase):
         """Verify that incorrect token fails."""
         request = MagicMock()
         request.headers = {"X-Omni-Token": "wrong_token"}
-        with self.assertRaises(MockHTTPException):
+        # Use the class that is currently injected into fastapi
+        ExpectedException = sys.modules["fastapi"].HTTPException
+        with self.assertRaises(ExpectedException):
             self.remote_agent.require_token_from_request(request)
 
 if __name__ == '__main__':
