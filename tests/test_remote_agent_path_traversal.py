@@ -14,8 +14,18 @@ sys.modules["firebase_admin.firestore"] = MagicMock()
 sys.modules["starlette.concurrency"] = MagicMock()
 sys.modules["dotenv"] = MagicMock()
 sys.modules["uvicorn"] = MagicMock()
-sys.modules["fastapi"] = MagicMock()
+
+# Mock fastapi consistently
+mock_fastapi = MagicMock()
+sys.modules["fastapi"] = mock_fastapi
 sys.modules["fastapi.responses"] = MagicMock()
+
+class MockHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        self.status_code = status_code
+        self.detail = detail
+
+mock_fastapi.HTTPException = MockHTTPException
 
 class TestRemoteAgentPathTraversal(unittest.TestCase):
     def setUp(self):
