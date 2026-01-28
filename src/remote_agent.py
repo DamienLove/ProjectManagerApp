@@ -663,6 +663,50 @@ def restore_external_resources(project_path: str) -> None:
     except Exception:
         pass
 
+def _get_installed_software_ids() -> set:
+    """Helper to batch fetch installed software IDs via winget."""
+    installed = set()
+    try:
+        # Run winget list to get all installed packages
+        # Using shell=False as per security requirement
+        res = subprocess.run(
+            ["winget", "list"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        )
+
+        lines = res.stdout.splitlines()
+        start_idx = 0
+
+        # Find the separator line (starts with ----)
+        for i, line in enumerate(lines):
+            if line.strip().startswith("---"):
+                start_idx = i + 1
+                break
+
+        for line in lines[start_idx:]:
+            if not line.strip():
+                continue
+            if "No installed package found" in line:
+                continue
+
+            # Split by 2+ spaces
+            parts = re.split(r"\s{2,}", line.strip())
+            if len(parts) >= 2:
+                # Format is usually: Name, Id, Version...
+                # We want the ID, which is the second column
+                app_id = parts[1].strip()
+                if app_id:
+                    installed.add(app_id)
+
+    except Exception as e:
+        log(f"Failed to list installed software: {e}")
+
+    return installed
+
 def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
@@ -672,17 +716,23 @@ def check_install_software(project_path: str) -> None:
             data = json.load(f)
     except Exception:
         return
-    for app_id in data.get("software", []):
-        log(f"Check software: {app_id}")
+
+    required_apps = data.get("software", [])
+    if not required_apps:
+        return
+
+    log("Checking installed software...")
+    installed_ids = _get_installed_software_ids()
+
+    for app_id in required_apps:
+        if app_id in installed_ids:
+            continue
+
+        log(f"Auto-install software: {app_id}")
         try:
-            res = subprocess.run([
-                "winget", "list", "-e", "--id", app_id
-            ], capture_output=True, text=True)
-            if "No installed package found" in res.stdout:
-                log(f"Auto-install software: {app_id}")
-                subprocess.run([
-                    "winget", "install", "-e", "--id", app_id, "--silent"
-                ])
+            subprocess.run([
+                "winget", "install", "-e", "--id", app_id, "--silent"
+            ], creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
         except Exception:
             pass
 
