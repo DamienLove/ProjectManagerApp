@@ -534,12 +534,9 @@ def is_path_safe(path: str) -> bool:
         for root_abs in ABS_REMOTE_ALLOWED_ROOTS:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
-        return False
-    # Otherwise block only obviously dangerous roots.
-    for p_abs in ABS_PROTECTED_PATHS:
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
-    return True
+
+    # Default Deny: If not explicitly allowed above, block it.
+    return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
