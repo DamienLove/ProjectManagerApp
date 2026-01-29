@@ -1891,6 +1891,16 @@ class ProjectManagerApp(ctk.CTk):
             grouped[cat].append((name, registry[name]))
 
         # 5. Render
+        # Empty State Check
+        if not any(grouped.values()):
+            f = ctk.CTkFrame(self.project_list, fg_color="transparent")
+            f.pack(expand=True, fill="both", pady=40)
+            ctk.CTkLabel(f, text="👋", font=("", 40)).pack(pady=(0, 10))
+            ctk.CTkLabel(f, text="Welcome to OmniProjectSync", font=("", 16, "bold")).pack()
+            ctk.CTkLabel(f, text="No projects found.\nCreate a new project to get started!", text_color="gray").pack(pady=5)
+            ctk.CTkButton(f, text="Create First Project", command=self.show_new_project, fg_color="#3b82f6", corner_radius=20).pack(pady=15)
+            return
+
         # Sort categories: user defined first (alpha), then Uncategorized
         cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
         if grouped["Uncategorized"]: cat_names.append("Uncategorized")
