@@ -673,6 +673,10 @@ def check_install_software(project_path: str) -> None:
     except Exception:
         return
     for app_id in data.get("software", []):
+        if app_id.strip().startswith("-"):
+            log(f"Skipping potentially unsafe software ID: {app_id}")
+            continue
+
         log(f"Check software: {app_id}")
         try:
             res = subprocess.run([
