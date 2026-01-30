@@ -1852,6 +1852,30 @@ class ProjectManagerApp(ctk.CTk):
             self.after(1000, self.exit_app)
 
     
+    def _render_empty_state(self):
+        """Display a friendly welcome message when no projects are found."""
+        container = ctk.CTkFrame(self.project_list, fg_color="transparent")
+        container.pack(fill="both", expand=True, pady=40)
+
+        # Icon
+        ctk.CTkLabel(container, text="✨", font=("", 48)).pack(pady=(0, 10))
+
+        # Title
+        ctk.CTkLabel(container, text="Welcome to OmniProjectSync", font=("", 20, "bold")).pack(pady=(0, 5))
+
+        # Subtitle
+        ctk.CTkLabel(container, text="Create your first project to get started.", font=("", 14), text_color="gray").pack(pady=(0, 20))
+
+        # Button
+        ctk.CTkButton(
+            container,
+            text="Create New Project",
+            command=self.show_new_project,
+            height=40,
+            corner_radius=20,
+            font=("", 13, "bold")
+        ).pack()
+
     def _refresh_projects(self):
         for w in self.project_list.winfo_children(): w.destroy()
         self.category_frames = {}
@@ -1890,10 +1914,16 @@ class ProjectManagerApp(ctk.CTk):
             if cat not in grouped: grouped[cat] = []
             grouped[cat].append((name, registry[name]))
 
+        self.sync_to_firestore()
+
         # 5. Render
         # Sort categories: user defined first (alpha), then Uncategorized
         cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
         if grouped["Uncategorized"]: cat_names.append("Uncategorized")
+
+        if not cat_names:
+            self._render_empty_state()
+            return
 
         for cat in cat_names:
             projects = grouped[cat]
@@ -1918,8 +1948,6 @@ class ProjectManagerApp(ctk.CTk):
                 card.header.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
                 if hasattr(card, "lbl"):
                     card.lbl.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
-
-        self.sync_to_firestore()
 
     def _show_category_menu(self, event, project_name):
         menu_items = []
