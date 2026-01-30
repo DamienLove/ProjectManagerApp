@@ -663,6 +663,28 @@ def restore_external_resources(project_path: str) -> None:
     except Exception:
         pass
 
+def parse_winget_list_output(output: str):
+    apps = set()
+    lines = output.splitlines()
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith("---"):
+            start = i + 1
+            break
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        if "No installed package found" in line:
+            continue
+        parts = re.split(r"\s{2,}", line.strip())
+        if len(parts) < 2:
+            continue
+        app_id = parts[1].strip()
+        if not app_id or app_id.lower() == "id":
+            continue
+        apps.add(app_id.lower())
+    return apps
+
 def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
@@ -672,19 +694,39 @@ def check_install_software(project_path: str) -> None:
             data = json.load(f)
     except Exception:
         return
-    for app_id in data.get("software", []):
-        log(f"Check software: {app_id}")
-        try:
-            res = subprocess.run([
-                "winget", "list", "-e", "--id", app_id
-            ], capture_output=True, text=True)
-            if "No installed package found" in res.stdout:
-                log(f"Auto-install software: {app_id}")
+
+    required_software = data.get("software", [])
+    if not required_software:
+        return
+
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+
+    log("Checking installed software...")
+    installed_ids = set()
+    try:
+        # Optimization: Run winget list once
+        res = subprocess.run(
+            ["winget", "list"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            creationflags=creationflags
+        )
+        installed_ids = parse_winget_list_output(res.stdout)
+    except Exception as e:
+        log(f"Failed to list software: {e}")
+        pass
+
+    for app_id in required_software:
+        if app_id.lower() not in installed_ids:
+            log(f"Auto-install software: {app_id}")
+            try:
                 subprocess.run([
                     "winget", "install", "-e", "--id", app_id, "--silent"
-                ])
-        except Exception:
-            pass
+                ], creationflags=creationflags)
+            except Exception:
+                pass
 
 def _is_same_file(src_path: str, dst_path: str) -> bool:
     try:
