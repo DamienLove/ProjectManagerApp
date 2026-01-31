@@ -33,6 +33,9 @@ mock_fastapi.FastAPI = MagicMock
 
 class TestRemoteAgentAuth(unittest.TestCase):
     def setUp(self):
+        # Restore this file's mock to sys.modules to ensure remote_agent imports the correct one
+        sys.modules["fastapi"] = mock_fastapi
+
         # Force reload of remote_agent
         if "remote_agent" in sys.modules:
             del sys.modules["remote_agent"]
