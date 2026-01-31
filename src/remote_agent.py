@@ -663,6 +663,37 @@ def restore_external_resources(project_path: str) -> None:
     except Exception:
         pass
 
+def parse_winget_list_output(output: str):
+    apps = []
+    lines = output.splitlines()
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith("---"):
+            start = i + 1
+            break
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        if "No installed package found" in line:
+            continue
+        parts = re.split(r"\s{2,}", line.strip())
+        if len(parts) < 2:
+            continue
+        name = parts[0].strip()
+        app_id = parts[1].strip()
+        if not name or not app_id or app_id.lower() == "id":
+            continue
+        apps.append((name, app_id))
+    # Deduplicate by id, keep first name.
+    seen = set()
+    deduped = []
+    for name, app_id in apps:
+        if app_id in seen:
+            continue
+        seen.add(app_id)
+        deduped.append((name, app_id))
+    return deduped
+
 def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
@@ -672,17 +703,37 @@ def check_install_software(project_path: str) -> None:
             data = json.load(f)
     except Exception:
         return
-    for app_id in data.get("software", []):
-        log(f"Check software: {app_id}")
+
+    software_list = data.get("software", [])
+    if not software_list:
+        return
+
+    installed_ids = set()
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        res = subprocess.run(
+            ["winget", "list"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            creationflags=creationflags
+        )
+        parsed = parse_winget_list_output(res.stdout)
+        installed_ids = {i.lower() for n, i in parsed}
+    except Exception as e:
+        log(f"Winget batch list failed: {e}")
+
+    for app_id in software_list:
+        if app_id.lower() in installed_ids:
+            continue
+
+        log(f"Auto-install software: {app_id}")
         try:
-            res = subprocess.run([
-                "winget", "list", "-e", "--id", app_id
-            ], capture_output=True, text=True)
-            if "No installed package found" in res.stdout:
-                log(f"Auto-install software: {app_id}")
-                subprocess.run([
-                    "winget", "install", "-e", "--id", app_id, "--silent"
-                ])
+            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            subprocess.run([
+                "winget", "install", "-e", "--id", app_id, "--silent"
+            ], creationflags=creationflags)
         except Exception:
             pass
 
