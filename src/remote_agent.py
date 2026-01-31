@@ -38,7 +38,6 @@ CONFIG_DIR = os.path.join(BASE_DIR, "config")
 LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
 
 DEFAULT_WORKSPACE = r"C:\\Projects"
-PROTECTED_PATHS = [r"C:\\Windows", r"C:\\Program Files", r"C:\\Program Files (x86)", r"C:\\"]
 
 CLOUD_META_DIRNAME = "_omni_sync"
 CLOUD_REGISTRY_FILENAME = "project_registry.json"
@@ -103,7 +102,6 @@ HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").s
 # Performance Optimization: Pre-calculate absolute paths
 ABS_LOCAL_WORKSPACE_ROOT = os.path.abspath(LOCAL_WORKSPACE_ROOT)
 ABS_REMOTE_ALLOWED_ROOTS = [os.path.abspath(p) for p in REMOTE_ALLOWED_ROOTS]
-ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
 
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
@@ -534,12 +532,9 @@ def is_path_safe(path: str) -> bool:
         for root_abs in ABS_REMOTE_ALLOWED_ROOTS:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
-        return False
-    # Otherwise block only obviously dangerous roots.
-    for p_abs in ABS_PROTECTED_PATHS:
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
-    return True
+
+    # Deny by default (Security Hardening)
+    return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
