@@ -539,7 +539,10 @@ def is_path_safe(path: str) -> bool:
     for p_abs in ABS_PROTECTED_PATHS:
         if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
             return False
-    return True
+
+    # Sentinel Security Fix: Deny by default.
+    # If path is not in workspace and not in allowed roots, block it.
+    return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
