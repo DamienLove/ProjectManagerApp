@@ -12,6 +12,7 @@ import sys
 import stat
 import subprocess
 import json
+import copy
 import hashlib
 import tempfile
 import queue
@@ -1257,6 +1258,8 @@ class ProjectManagerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         log_startup("ProjectManagerApp init started")
+        # Initialize JSON cache for performance
+        self._json_cache = {}
         # Bind to instance to avoid Tk __getattr__ fallback on missing attrs.
         self._load_reg = lambda: load_registry(self)
         # Ensure attributes exist before login flow touches them.
@@ -1636,19 +1639,33 @@ class ProjectManagerApp(ctk.CTk):
         return os.path.join(meta, CLOUD_REGISTRY_FILENAME)
 
     def _load_json(self, path):
-        if path and os.path.exists(path):
-            try:
-                with open(path, "r") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        if not path or not os.path.exists(path):
+            return {}
+
+        # Ensure cache exists (in case __init__ didn't run or was bypassed)
+        if not hasattr(self, "_json_cache"):
+            self._json_cache = {}
+
+        try:
+            mtime = os.path.getmtime(path)
+            if path in self._json_cache:
+                cached_mtime, cached_data = self._json_cache[path]
+                if mtime == cached_mtime:
+                    return copy.deepcopy(cached_data)
+
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self._json_cache[path] = (mtime, data)
+            return copy.deepcopy(data)
+        except Exception:
+            return {}
 
     def _save_json(self, path, data):
         if not path:
             return
         try:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except Exception:
             pass
