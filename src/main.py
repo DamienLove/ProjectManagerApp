@@ -1891,33 +1891,42 @@ class ProjectManagerApp(ctk.CTk):
             grouped[cat].append((name, registry[name]))
 
         # 5. Render
-        # Sort categories: user defined first (alpha), then Uncategorized
-        cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
-        if grouped["Uncategorized"]: cat_names.append("Uncategorized")
+        total_projects = sum(len(p) for p in grouped.values())
 
-        for cat in cat_names:
-            projects = grouped[cat]
-            if not projects and cat == "Uncategorized": continue
-            
-            # Category Header/Container
-            # If Uncategorized is empty, skip. If others empty, show (to allow dragging in? or just show empty)
-            # For now, show.
-            
-            frame = CollapsibleFrame(self.project_list, title=f"{cat} ({len(projects)})")
-            frame.pack(fill="x", pady=5)
-            frame.toggle() # Expand by default
-            self.category_frames[cat] = frame
+        if total_projects == 0:
+            f = ctk.CTkFrame(self.project_list, fg_color="transparent")
+            f.pack(fill="both", expand=True, pady=40)
+            ctk.CTkLabel(f, text="👋 Welcome to OmniProjectSync!", font=("", 18, "bold")).pack(pady=(0, 10))
+            ctk.CTkLabel(f, text="No projects found. Start by creating one.", text_color="gray").pack(pady=(0, 20))
+            ctk.CTkButton(f, text="Create First Project", command=self.show_new_project, height=45, corner_radius=22).pack()
+        else:
+            # Sort categories: user defined first (alpha), then Uncategorized
+            cat_names = sorted([c for c in grouped.keys() if c != "Uncategorized"])
+            if grouped["Uncategorized"]: cat_names.append("Uncategorized")
 
-            # Add "Add Category" or "Rename" buttons to header? maybe later.
-            
-            for name, status in projects:
-                card = ProjectCard(frame.content, self, name, status)
-                self.project_cards[name] = card
-                # Bind right click for category move
-                card.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
-                card.header.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
-                if hasattr(card, "lbl"):
-                    card.lbl.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+            for cat in cat_names:
+                projects = grouped[cat]
+                if not projects and cat == "Uncategorized": continue
+
+                # Category Header/Container
+                # If Uncategorized is empty, skip. If others empty, show (to allow dragging in? or just show empty)
+                # For now, show.
+
+                frame = CollapsibleFrame(self.project_list, title=f"{cat} ({len(projects)})")
+                frame.pack(fill="x", pady=5)
+                frame.toggle() # Expand by default
+                self.category_frames[cat] = frame
+
+                # Add "Add Category" or "Rename" buttons to header? maybe later.
+
+                for name, status in projects:
+                    card = ProjectCard(frame.content, self, name, status)
+                    self.project_cards[name] = card
+                    # Bind right click for category move
+                    card.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                    card.header.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
+                    if hasattr(card, "lbl"):
+                        card.lbl.bind("<Button-3>", lambda e, n=name: self._show_category_menu(e, n))
 
         self.sync_to_firestore()
 
