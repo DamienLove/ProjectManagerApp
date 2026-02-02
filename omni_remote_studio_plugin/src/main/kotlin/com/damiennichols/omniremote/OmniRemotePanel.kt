@@ -92,8 +92,16 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         loadSettings()
         add(buildConfigTabs(), BorderLayout.NORTH)
         add(buildContentTabs(), BorderLayout.CENTER)
-        autoLoginIfPossible()
-        autoStartHostIfConfigured()
+        try {
+            autoLoginIfPossible()
+        } catch (e: Exception) {
+            logHostMessage("Auto-login failed: ${e.message}")
+        }
+        try {
+            autoStartHostIfConfigured()
+        } catch (e: Exception) {
+            logHostMessage("Host auto-start check failed: ${e.message}")
+        }
     }
 
     private fun buildConfigTabs(): JTabbedPane {
@@ -132,8 +140,13 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
                 return@addActionListener
             }
             saveSettings()
-            hostServer.start(port, token)
-            hostStatusLabel.text = "Host: running on port " + port
+            try {
+                hostServer.start(port, token)
+                hostStatusLabel.text = "Host: running on port " + port
+            } catch (e: Exception) {
+                hostStatusLabel.text = "Host: error"
+                logHostMessage("Host start failed: ${e.message}")
+            }
         }
 
         stopButton.addActionListener {
@@ -880,7 +893,7 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         val savedEmail = props.getValue("omniremote.firebaseEmail", "")
         val savedUid = props.getValue("omniremote.firebaseUid", "")
         if (savedEmail.isNotBlank() || savedUid.isNotBlank()) {
-            autoStartHost()
+            runInBackground { autoStartHost() }
         }
     }
 
@@ -1026,7 +1039,17 @@ class OmniRemotePanel(project: Project) : JPanel(BorderLayout()) {
         val token = String(hostTokenField.password)
         if (token.isNotBlank()) {
             logHostMessage("Auto-starting host server...")
-            hostServer.start(port, token)
+            try {
+                hostServer.start(port, token)
+                SwingUtilities.invokeLater {
+                    hostStatusLabel.text = "Host: running on port " + port
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater {
+                    hostStatusLabel.text = "Host: error"
+                }
+                logHostMessage("Host auto-start failed: ${e.message}")
+            }
         }
     }
 }
