@@ -5,3 +5,7 @@
 ## 2024-05-23 - Abbreviated Button Labels
 **Learning:** Abbreviated buttons (Gen, Tun, LAN) save space but confuse new users.
 **Action:** Always attach a `ToolTip` to explain the full function of abbreviated actions.
+
+## 2024-05-24 - Empty State Onboarding
+**Learning:** Dynamic lists without empty states leave new users guessing what to do next.
+**Action:** When a list (like projects) is empty, always display a friendly welcome message and a primary Call to Action button.
