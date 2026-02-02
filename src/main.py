@@ -26,6 +26,12 @@ APP_NAME = "OmniProjectSync"
 VERSION = "5.0.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
+# Folders to ignore during backup/restore to avoid massive sync overhead
+SYNC_IGNORE_PATTERNS = [
+    ".git", ".idea", ".vscode", "node_modules", "venv", ".venv", 
+    "__pycache__", "build", "dist", ".gradle", ".dart_tool"
+]
+
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -2056,27 +2062,43 @@ class ProjectManagerApp(ctk.CTk):
         threading.Thread(target=task, daemon=True).start()
 
     def _copy_with_progress(self, src, dst):
-        # Count files first for progress
+        # 1. Count files first for progress (filtering ignored dirs)
         total_files = 0
         for root, dirs, files in os.walk(src):
+            # Filter directories in-place to avoid walking into ignored ones
+            dirs[:] = [d for d in dirs if d not in SYNC_IGNORE_PATTERNS]
             total_files += len(files)
 
+        if total_files == 0:
+            self.log("   ℹ️ No files to sync.")
+            return
+
         copied_files = 0
+        last_log_time = time.time()
 
         def copy_progress(s, d):
-            nonlocal copied_files
+            nonlocal copied_files, last_log_time
             shutil.copy2(s, d)
             copied_files += 1
 
-            # Update visual progress bar and log text
-            pct = copied_files / total_files if total_files > 0 else 0
+            # Update visual progress bar
+            pct = copied_files / total_files
             self.after(0, lambda: self.progress_bar.set(pct))
 
-            if copied_files % max(1, int(total_files / 10)) == 0:
+            # Heartbeat log every 5 seconds or 10%
+            now = time.time()
+            if now - last_log_time > 5 or copied_files % max(1, int(total_files / 10)) == 0:
                  pct_int = int(pct * 100)
-                 self.after(0, lambda: self.log(f"   ⏳ Syncing... {pct_int}% ({copied_files}/{total_files})"))
+                 self.log(f"   ⏳ Syncing... {pct_int}% ({copied_files}/{total_files})")
+                 last_log_time = now
 
-        shutil.copytree(src, dst, dirs_exist_ok=True, copy_function=copy_progress)
+        # 2. Execute copy with ignore filter
+        shutil.copytree(
+            src, dst, 
+            dirs_exist_ok=True, 
+            copy_function=copy_progress,
+            ignore=shutil.ignore_patterns(*SYNC_IGNORE_PATTERNS)
+        )
         self.after(0, lambda: self.progress_bar.set(0)) # Reset when done
 
     def _robust_move_to_backup(self, src, dst, name):

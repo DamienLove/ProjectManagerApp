@@ -40,6 +40,12 @@ LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
 DEFAULT_WORKSPACE = r"C:\\Projects"
 PROTECTED_PATHS = [r"C:\\Windows", r"C:\\Program Files", r"C:\\Program Files (x86)", r"C:\\"]
 
+# Folders to ignore during backup/restore
+SYNC_IGNORE_PATTERNS = [
+    ".git", ".idea", ".vscode", "node_modules", "venv", ".venv", 
+    "__pycache__", "build", "dist", ".gradle", ".dart_tool"
+]
+
 CLOUD_META_DIRNAME = "_omni_sync"
 CLOUD_REGISTRY_FILENAME = "project_registry.json"
 
@@ -774,7 +780,10 @@ def _is_same_file(src_path: str, dst_path: str) -> bool:
 def copy_tree(src: str, dst: str) -> None:
     if not os.path.exists(src):
         return
-    for root, _dirs, files in os.walk(src):
+    for root, dirs, files in os.walk(src):
+        # Filter directories in-place to skip ignored ones
+        dirs[:] = [d for d in dirs if d not in SYNC_IGNORE_PATTERNS]
+        
         rel = os.path.relpath(root, src)
         dest_root = dst if rel == "." else os.path.join(dst, rel)
         try:
