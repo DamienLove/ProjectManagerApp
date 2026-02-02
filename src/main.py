@@ -23,7 +23,7 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.8.0"
+VERSION = "4.9.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
@@ -1003,11 +1003,12 @@ class ProjectCard(ctk.CTkFrame):
                             hover_color=hover, text_color=text_col,
                             height=35, corner_radius=17)
         btn.pack(fill="x", pady=3, padx=5)
-        if self.busy:
-            btn.configure(state="disabled")
 
         if tooltip:
             ToolTip(btn, tooltip)
+
+        if self.busy:
+            btn.configure(state="disabled")
 
     def set_busy(self, is_busy):
         self.busy = is_busy

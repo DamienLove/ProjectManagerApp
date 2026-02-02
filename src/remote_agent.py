@@ -24,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.8.0"
+VERSION = "4.9.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -707,6 +707,12 @@ def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
         return
+    try:
+        with open(manifest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return
+
     software_list = data.get("software", [])
     if not software_list:
         return

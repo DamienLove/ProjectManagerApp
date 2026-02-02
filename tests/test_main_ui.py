@@ -1,9 +1,8 @@
 import unittest
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-# 1. Mock dependencies BEFORE importing src.main
-sys.modules["customtkinter"] = MagicMock()
+# Mock dependencies
 sys.modules["pystray"] = MagicMock()
 sys.modules["PIL"] = MagicMock()
 sys.modules["PIL.Image"] = MagicMock()
@@ -13,25 +12,8 @@ sys.modules["firebase_admin.firestore"] = MagicMock()
 sys.modules["requests"] = MagicMock()
 sys.modules["dotenv"] = MagicMock()
 
-# Mock specific ctk classes
-class MockWidget:
-    def __init__(self, master=None, **kwargs):
-        self.master = master
-        self.pack = MagicMock()
-        self.pack_forget = MagicMock()
-        self.grid = MagicMock()
-        self.grid_forget = MagicMock()
-        self.bind = MagicMock()
-        self.configure = MagicMock()
-        self.winfo_children = lambda: []
-        self.destroy = MagicMock()
-
-sys.modules["customtkinter"].CTkFrame = MockWidget
-sys.modules["customtkinter"].CTkButton = MockWidget
-sys.modules["customtkinter"].CTkLabel = MockWidget
-
-# Now import src.main
-from src import main
+# Import main after mocking
+import src.main as main
 
 class TestProjectCardTooltips(unittest.TestCase):
     def setUp(self):
@@ -39,45 +21,50 @@ class TestProjectCardTooltips(unittest.TestCase):
         self.mock_app.icons = {}
 
         # Mock ToolTip class to verify instantiation
-        self.original_tooltip = main.ToolTip
-        self.mock_tooltip = MagicMock()
-        main.ToolTip = self.mock_tooltip
+        self.patcher = patch('src.main.ToolTip')
+        self.mock_tooltip = self.patcher.start()
+        
+        # Mock ctk components used in ProjectCard
+        self.ctk_patcher = patch('src.main.ctk')
+        self.mock_ctk = self.ctk_patcher.start()
 
     def tearDown(self):
-        main.ToolTip = self.original_tooltip
+        self.patcher.stop()
+        self.ctk_patcher.stop()
 
     def test_btn_accepts_tooltip(self):
         """Test that _btn accepts a tooltip argument and creates a ToolTip."""
-        # Create ProjectCard (mocks parent and app)
-        card = main.ProjectCard(MagicMock(), self.mock_app, "TestProject", "Local")
-
-        # Call _btn with tooltip
-        try:
+        # Mock parent frame
+        mock_parent = MagicMock()
+        
+        # We need to mock ProjectCard's parent class CTkFrame
+        with patch('src.main.ctk.CTkFrame'):
+            card = main.ProjectCard(mock_parent, self.mock_app, "TestProject", "Local")
+            # Clear previous calls from __init__
+            self.mock_ctk.CTkButton.reset_mock()
+            
+            # Call _btn with tooltip
             card._btn("Test Button", lambda: None, tooltip="Helpful text")
-        except TypeError as e:
-            self.fail(f"_btn raised TypeError, likely missing tooltip argument: {e}")
 
-        # Verify ToolTip was instantiated
-        self.assertTrue(self.mock_tooltip.called, "ToolTip class was not instantiated")
-
-        # Check arguments: call_args returns (args, kwargs)
-        # We expect ToolTip(widget, text)
-        args, _ = self.mock_tooltip.call_args
-        created_btn = args[0]
-        tooltip_text = args[1]
-
-        self.assertIsInstance(created_btn, MockWidget)
-        self.assertEqual(tooltip_text, "Helpful text")
+            # Verify ToolTip was instantiated
+            self.assertTrue(self.mock_tooltip.called, "ToolTip class was not instantiated")
+            
+            args, _ = self.mock_tooltip.call_args
+            tooltip_text = args[1]
+            self.assertEqual(tooltip_text, "Helpful text")
 
     def test_btn_no_tooltip(self):
-        """Test that _btn works without tooltip (backward compatibility/default)."""
-        card = main.ProjectCard(MagicMock(), self.mock_app, "TestProject", "Local")
+        """Test that _btn works without tooltip."""
+        mock_parent = MagicMock()
+        
+        with patch('src.main.ctk.CTkFrame'):
+            card = main.ProjectCard(mock_parent, self.mock_app, "TestProject", "Local")
+            
+            self.mock_tooltip.reset_mock()
+            card._btn("Test Button", lambda: None)
 
-        self.mock_tooltip.reset_mock()
-        card._btn("Test Button", lambda: None)
-
-        # ToolTip should NOT be called if no tooltip provided
-        self.mock_tooltip.assert_not_called()
+            # ToolTip should NOT be called if no tooltip provided
+            self.mock_tooltip.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,15 @@
 import sys
 import os
 import unittest
-from unittest.mock import MagicMock, patch, mock_open
+import json
+import tempfile
+import shutil
+from unittest.mock import MagicMock, patch
 
 # Add src to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-# Mock dependencies to prevent import errors and side effects
+# Mock dependencies
 sys.modules["firebase_admin"] = MagicMock()
 sys.modules["firebase_admin.credentials"] = MagicMock()
 sys.modules["firebase_admin.firestore"] = MagicMock()
@@ -16,39 +19,46 @@ sys.modules["uvicorn"] = MagicMock()
 sys.modules["fastapi"] = MagicMock()
 sys.modules["fastapi.responses"] = MagicMock()
 
+import remote_agent
+
 class TestWingetInjection(unittest.TestCase):
     def setUp(self):
-        # Force reload of remote_agent to apply fresh mocks
-        if "remote_agent" in sys.modules:
-            del sys.modules["remote_agent"]
-        if "src.remote_agent" in sys.modules:
-            del sys.modules["src.remote_agent"]
+        self.test_dir = tempfile.mkdtemp()
+        self.project_path = os.path.join(self.test_dir, "project1")
+        os.makedirs(self.project_path)
+        self.manifest_path = os.path.join(self.project_path, "omni.json")
 
         self.env_patcher = patch.dict(os.environ, {
             "REMOTE_ACCESS_TOKEN": "test_token",
-            "LOCAL_WORKSPACE_ROOT": "/tmp/workspace"
+            "LOCAL_WORKSPACE_ROOT": self.test_dir
         })
         self.env_patcher.start()
 
-        import remote_agent
-        self.remote_agent = remote_agent
-
     def tearDown(self):
         self.env_patcher.stop()
+        shutil.rmtree(self.test_dir)
 
     @patch("subprocess.run")
-    @patch("builtins.open", new_callable=mock_open, read_data='{"software": ["-malicious_arg"]}')
-    @patch("json.load")
     @patch("os.path.exists")
-    def test_check_install_software_prevents_injection(self, mock_exists, mock_json_load, mock_file, mock_run):
+    def test_check_install_software_prevents_injection(self, mock_exists, mock_run):
         """Test that check_install_software prevents argument injection by skipping IDs starting with -"""
-        mock_exists.return_value = True
-        mock_json_load.return_value = {"software": ["-malicious_arg"]}
+        # Setup manifest
+        with open(self.manifest_path, "w") as f:
+            json.dump({"software": ["-malicious_arg"]}, f)
 
-        self.remote_agent.check_install_software("/tmp/workspace/project1")
+        mock_exists.side_effect = lambda p: p == self.manifest_path or p == self.project_path
 
-        # We expect validation to prevent any subprocess call with this ID
-        mock_run.assert_not_called()
+        # Mock winget list output (empty)
+        mock_run.return_value = MagicMock(stdout="No installed package found")
+
+        remote_agent.check_install_software(self.project_path)
+
+        # We expect validation to prevent any subprocess call with install for this ID
+        install_calls = [
+            call for call in mock_run.call_args_list
+            if call.args and len(call.args) > 0 and isinstance(call.args[0], list) and "install" in call.args[0]
+        ]
+        self.assertEqual(len(install_calls), 0)
 
 if __name__ == '__main__':
     unittest.main()

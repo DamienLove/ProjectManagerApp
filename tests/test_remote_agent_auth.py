@@ -6,34 +6,32 @@ from unittest.mock import MagicMock, patch
 # Add src to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-# Mock dependencies
-sys.modules["firebase_admin"] = MagicMock()
-sys.modules["firebase_admin.credentials"] = MagicMock()
-sys.modules["firebase_admin.firestore"] = MagicMock()
-sys.modules["starlette.concurrency"] = MagicMock()
-sys.modules["dotenv"] = MagicMock()
-sys.modules["uvicorn"] = MagicMock()
-
-# Mock fastapi
-mock_fastapi = MagicMock()
-sys.modules["fastapi"] = mock_fastapi
-sys.modules["fastapi.responses"] = MagicMock()
-
-# Define Mock exceptions and classes
+# Define a real Exception class for mocking HTTPException
 class MockHTTPException(Exception):
-    def __init__(self, status_code, detail):
+    def __init__(self, status_code, detail=None):
         self.status_code = status_code
         self.detail = detail
 
+# Mock dependencies
+mock_fastapi = MagicMock()
 mock_fastapi.HTTPException = MockHTTPException
 mock_fastapi.Request = MagicMock
 mock_fastapi.WebSocket = MagicMock
 mock_fastapi.WebSocketDisconnect = Exception
 mock_fastapi.FastAPI = MagicMock
 
+sys.modules["firebase_admin"] = MagicMock()
+sys.modules["firebase_admin.credentials"] = MagicMock()
+sys.modules["firebase_admin.firestore"] = MagicMock()
+sys.modules["starlette.concurrency"] = MagicMock()
+sys.modules["dotenv"] = MagicMock()
+sys.modules["uvicorn"] = MagicMock()
+sys.modules["fastapi"] = mock_fastapi
+sys.modules["fastapi.responses"] = MagicMock()
+
 class TestRemoteAgentAuth(unittest.TestCase):
     def setUp(self):
-        # Force reload of remote_agent
+        # Force reload of remote_agent to ensure it uses the mocks
         if "remote_agent" in sys.modules:
             del sys.modules["remote_agent"]
         if "src.remote_agent" in sys.modules:
@@ -59,7 +57,6 @@ class TestRemoteAgentAuth(unittest.TestCase):
             except Exception as e:
                 self.fail(f"require_token_from_request raised exception: {e}")
 
-            # This assertion is expected to FAIL initially
             self.assertTrue(mock_compare.called, "secrets.compare_digest should be used for token verification")
 
     def test_auth_logic_valid(self):
@@ -75,6 +72,7 @@ class TestRemoteAgentAuth(unittest.TestCase):
         """Verify that incorrect token fails."""
         request = MagicMock()
         request.headers = {"X-Omni-Token": "wrong_token"}
+        # Verify it raises our mocked HTTPException
         with self.assertRaises(MockHTTPException):
             self.remote_agent.require_token_from_request(request)
 

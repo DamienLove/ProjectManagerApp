@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch, ANY
 # Add src to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-# Mock dependencies strictly before import
+# Mock dependencies
 sys.modules["firebase_admin"] = MagicMock()
 sys.modules["firebase_admin.credentials"] = MagicMock()
 sys.modules["firebase_admin.firestore"] = MagicMock()
@@ -20,20 +20,18 @@ sys.modules["websockets"] = MagicMock()
 
 # Mock fastapi
 mock_fastapi = MagicMock()
-sys.modules["fastapi"] = mock_fastapi
-sys.modules["fastapi.responses"] = MagicMock()
-
-# Define Mock exceptions
 class MockHTTPException(Exception):
     def __init__(self, status_code, detail):
         self.status_code = status_code
         self.detail = detail
-
 mock_fastapi.HTTPException = MockHTTPException
 mock_fastapi.Request = MagicMock
 mock_fastapi.WebSocket = MagicMock
 mock_fastapi.WebSocketDisconnect = Exception
 mock_fastapi.FastAPI = MagicMock
+
+sys.modules["fastapi"] = mock_fastapi
+sys.modules["fastapi.responses"] = MagicMock()
 
 # Now import remote_agent
 import remote_agent
@@ -62,11 +60,14 @@ Git                   Git.Git             2.45.0
         self.assertIn(("Git", "Git.Git"), parsed)
 
     @patch("subprocess.run")
-    def test_check_install_software_missing(self, mock_run):
+    @patch("os.path.exists")
+    def test_check_install_software_missing(self, mock_exists, mock_run):
         """Test that missing software triggers installation."""
         # Setup manifest
         with open(self.manifest_path, "w") as f:
             json.dump({"software": ["Node.js"]}, f)
+
+        mock_exists.side_effect = lambda p: p == self.manifest_path or p == self.project_path
 
         # Mock winget list output
         mock_list_output = MagicMock()
@@ -95,15 +96,17 @@ Git                   Git.Git             2.45.0
             if call.args and len(call.args) > 0 and isinstance(call.args[0], list) and "install" in call.args[0]
         ]
         self.assertEqual(len(install_calls), 1)
-        # call.args[0] is the command list
         self.assertIn("Node.js", install_calls[0].args[0])
 
     @patch("subprocess.run")
-    def test_check_install_software_present(self, mock_run):
+    @patch("os.path.exists")
+    def test_check_install_software_present(self, mock_exists, mock_run):
         """Test that present software skips installation."""
         # Setup manifest
         with open(self.manifest_path, "w") as f:
             json.dump({"software": ["Git.Git"]}, f)
+
+        mock_exists.side_effect = lambda p: p == self.manifest_path or p == self.project_path
 
         # Mock winget list output containing Git.Git
         mock_list_output = MagicMock()

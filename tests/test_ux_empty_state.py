@@ -1,6 +1,8 @@
 import sys
 import os
 import unittest
+import tempfile
+import shutil
 from unittest.mock import MagicMock, patch
 
 # 1. Mock dependencies BEFORE importing main
@@ -48,10 +50,14 @@ class DummyWidget:
     def lift(self): pass
     def attributes(self, *args): pass
     def state(self, *args): pass
-    def wm_deiconify(self): pass
-    def deiconify(self): pass
-    def withdraw(self): pass
-    def update_idletasks(self): pass
+    def wm_deiconify(self):
+        pass
+    def deiconify(self):
+        pass
+    def withdraw(self):
+        pass
+    def update_idletasks(self):
+        pass
     def geometry(self, *args): pass
     def title(self, *args): pass
     def protocol(self, *args): pass
@@ -62,15 +68,19 @@ class DummyWidget:
     def winfo_screenwidth(self): return 1920
     def winfo_screenheight(self): return 1080
     def overrideredirect(self, *args): pass
-    def grab_set(self): pass
-    def focus_force(self): pass
+    def grab_set(self):
+        pass
+    def focus_force(self):
+        pass
     def winfo_rootx(self): return 0
     def winfo_rooty(self): return 0
     def wm_overrideredirect(self, *args): pass
     def wm_geometry(self, *args): pass
     def wait(self, *args): pass
-    def terminate(self): pass
-    def kill(self): pass
+    def terminate(self):
+        pass
+    def kill(self):
+        pass
     def columnconfigure(self, *args, **kwargs): pass
     def rowconfigure(self, *args, **kwargs): pass
 
@@ -78,7 +88,6 @@ class CTk(DummyWidget):
     def __init__(self, **kwargs):
         super().__init__(None, **kwargs)
     def after(self, ms, func=None):
-        # execute immediately for testing if functional
         if func: func()
 
 class CTkFrame(DummyWidget): pass
@@ -136,8 +145,10 @@ from main import ProjectManagerApp
 
 class TestUXEmptyState(unittest.TestCase):
     def setUp(self):
-        # Patch load_registry globally or on the instance
-        pass
+        self.test_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
 
     @patch('main.ProjectManagerApp._load_local_reg', return_value={})
     @patch('main.ProjectManagerApp._load_cloud_reg', return_value={})
@@ -146,16 +157,14 @@ class TestUXEmptyState(unittest.TestCase):
     @patch('os.path.exists', return_value=True)
     def test_empty_state_rendered(self, mock_exists, mock_makedirs, mock_cats, mock_cloud, mock_local):
         # Initialize app
-        # We need to mock _start_remote_agent and others to avoid side effects
         with patch.object(ProjectManagerApp, '_start_remote_agent'), \
              patch.object(ProjectManagerApp, '_start_tray_icon'), \
              patch.object(ProjectManagerApp, '_init_firebase'), \
              patch.object(ProjectManagerApp, '_check_queue'), \
-             patch('main.LoginWindow', MagicMock()): # Avoid login window
+             patch.dict(os.environ, {"LOCAL_WORKSPACE_ROOT": self.test_dir}), \
+             patch('main.LoginWindow', MagicMock()):
 
             app = ProjectManagerApp()
-
-            # Ensure project list is clear
             app.project_list = CTkScrollableFrame(app)
             app.project_cards = {}
             app.category_frames = {}
@@ -166,19 +175,16 @@ class TestUXEmptyState(unittest.TestCase):
             # Check children of project_list
             children = app.project_list.winfo_children()
 
-            # Search for welcome text
             found_welcome = False
             for child in children:
-                # Need to traverse deep if wrapped in frames
-                # But simple check: look at direct children or their text
+                # Check direct labels or nested in frames
                 if isinstance(child, CTkLabel):
-                    if "Welcome" in child.kwargs.get("text", ""):
+                    if "Welcome" in child.text:
                         found_welcome = True
                 elif isinstance(child, CTkFrame):
-                    # Check inside frame
                     for sub in child.winfo_children():
                         if isinstance(sub, CTkLabel):
-                             if "Welcome" in sub.kwargs.get("text", ""):
+                             if "Welcome" in sub.text:
                                 found_welcome = True
 
             self.assertTrue(found_welcome, "Empty state 'Welcome' message should be displayed when no projects exist.")
