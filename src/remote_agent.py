@@ -24,7 +24,7 @@ from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
-VERSION = "4.9.0"
+VERSION = "5.0.0"
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -621,20 +621,29 @@ def backup_external_resources(project_path: str) -> None:
     assets_dir = os.path.join(project_path, "_omni_assets")
     os.makedirs(assets_dir, exist_ok=True)
     restore_map = {}
+    
+    # Combined resource list: (path, type)
+    resources = []
     for p in data.get("external_paths", []):
+        resources.append((p, "External"))
+    for p in data.get("app_state_paths", []):
+        resources.append((p, "App State"))
+
+    for p_raw, rtype in resources:
+        p = os.path.expandvars(p_raw)
         if not is_path_safe(p):
-            log(f"Skipping unsafe external path: {p}")
+            log(f"Skipping unsafe {rtype} path: {p}")
             continue
         if os.path.exists(p):
-            pid = hashlib.md5(p.encode()).hexdigest()
+            pid = hashlib.md5(p_raw.encode()).hexdigest()
             dest = os.path.join(assets_dir, pid)
-            log(f"Backup external resource: {p}")
+            log(f"Backup {rtype} resource: {p}")
             if os.path.isdir(p):
                 shutil.move(p, dest)
             else:
                 shutil.copy2(p, dest)
                 os.remove(p)
-            restore_map[pid] = p
+            restore_map[pid] = p_raw
     with open(os.path.join(assets_dir, "restore_map.json"), "w", encoding="utf-8") as f:
         json.dump(restore_map, f, indent=2)
 
@@ -648,13 +657,14 @@ def restore_external_resources(project_path: str) -> None:
             restore_map = json.load(f)
     except Exception:
         return
-    for pid, original_path in restore_map.items():
+    for pid, original_path_raw in restore_map.items():
+        original_path = os.path.expandvars(original_path_raw)
         if not is_path_safe(original_path):
             log(f"Skipping restore to unsafe path: {original_path}")
             continue
         stored_path = os.path.join(assets_dir, pid)
         if os.path.exists(stored_path):
-            log(f"Restore external resource: {original_path}")
+            log(f"Restore resource: {original_path}")
             parent = os.path.dirname(original_path)
             try:
                 os.makedirs(parent, exist_ok=True)

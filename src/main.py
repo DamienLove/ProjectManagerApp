@@ -23,7 +23,7 @@ from firebase_admin import credentials, firestore
 
 # --- CONFIG ---
 APP_NAME = "OmniProjectSync"
-VERSION = "4.9.0"
+VERSION = "5.0.0"
 OWNER_EMAILS = {"me@damiennichols.com", "damien@dmnlat.com"}
 
 def get_base_dir() -> str:
@@ -554,6 +554,10 @@ class ProjectConfigWindow(ctk.CTkToplevel):
         ctk.CTkButton(s_add, text="Browse", width=80, height=32, corner_radius=16, command=lambda: SoftwareBrowserWindow(self, self.add_software_batch)).pack(side="right", padx=5)
         ctk.CTkButton(s_add, text="Add ID", width=80, height=32, corner_radius=16, command=self.add_software_id).pack(side="right")    
         self.scroll_app_state = ctk.CTkScrollableFrame(ta); self.scroll_app_state.pack(fill="both", expand=True)
+        # Add descriptive label
+        ctk.CTkLabel(self.scroll_app_state, text="⚙️ App State: Config folders or files outside the project directory\nthat should be backed up and restored with the project.", 
+                     text_color="gray70", font=("", 11, "italic")).pack(pady=5)
+        
         a_add = ctk.CTkFrame(ta); a_add.pack(fill="x", pady=5)
         self.entry_app_state_path = ctk.CTkEntry(a_add, placeholder_text="C:\\Users\\...\\AppData\\Roaming\\..._profile"); self.entry_app_state_path.pack(side="left", expand=True, fill="x", padx=5)
         ctk.CTkButton(a_add, text="Add", width=80, height=32, corner_radius=16, command=self.add_app_state_path).pack(side="right")    
@@ -2165,9 +2169,10 @@ class ProjectManagerApp(ctk.CTk):
         paths_to_backup.extend([(p, "External") for p in data.get("external_paths", [])])
         paths_to_backup.extend([(p, "App State") for p in data.get("app_state_paths", [])])
 
-        for p, resource_type in paths_to_backup:
+        for p_raw, resource_type in paths_to_backup:
+            p = os.path.expandvars(p_raw)
             if os.path.exists(p):
-                pid = hashlib.md5(p.encode()).hexdigest()
+                pid = hashlib.md5(p_raw.encode()).hexdigest()
                 dest = os.path.join(assets_dir, pid)
                 self.log(f"   > Moving {resource_type}: {p}")
                 if os.path.isdir(p):
@@ -2175,7 +2180,7 @@ class ProjectManagerApp(ctk.CTk):
                 else:
                     shutil.copy2(p, dest)
                     os.remove(p)
-                restore_map[pid] = p
+                restore_map[pid] = p_raw
 
         self._save_json(map_file, restore_map)
 
@@ -2186,7 +2191,8 @@ class ProjectManagerApp(ctk.CTk):
 
         restore_map = self._load_json(map_file)
 
-        for pid, original_path in restore_map.items():
+        for pid, original_path_raw in restore_map.items():
+            original_path = os.path.expandvars(original_path_raw)
             stored_path = os.path.join(assets_dir, pid)
             if os.path.exists(stored_path):
                 self.log(f"   > Restoring resource: {original_path}")
@@ -2199,7 +2205,7 @@ class ProjectManagerApp(ctk.CTk):
                     os.makedirs(fallback_dir, exist_ok=True)
                     fallback_path = os.path.join(fallback_dir, pid)
                     shutil.move(stored_path, fallback_path)
-                    self.log(f"   ⚠️ Restore failed, kept at {fallback_path} ({e})", "red")
+                    self.log(f"   ⚠️ Restore failed; kept at {fallback_path} ({e})")
 
         # Clean up the map so we don't restore twice.
         self._save_json(map_file, {})
