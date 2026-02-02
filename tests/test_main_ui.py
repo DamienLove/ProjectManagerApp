@@ -12,8 +12,26 @@ sys.modules["firebase_admin.firestore"] = MagicMock()
 sys.modules["requests"] = MagicMock()
 sys.modules["dotenv"] = MagicMock()
 
-# Import main after mocking
-import src.main as main
+import customtkinter
+# Define Mock classes
+class MockWidget:
+    def __init__(self, master=None, **kwargs):
+        self.master = master
+        self.pack = MagicMock()
+        self.pack_forget = MagicMock()
+        self.grid = MagicMock()
+        self.grid_forget = MagicMock()
+        self.bind = MagicMock()
+        self.configure = MagicMock()
+        self.winfo_children = lambda: []
+        self.destroy = MagicMock()
+
+# Patch ctk before import
+with patch('customtkinter.CTkFrame', MockWidget), \
+     patch('customtkinter.CTkButton', MockWidget), \
+     patch('customtkinter.CTkLabel', MockWidget):
+    
+    from src import main
 
 class TestProjectCardTooltips(unittest.TestCase):
     def setUp(self):
@@ -21,45 +39,40 @@ class TestProjectCardTooltips(unittest.TestCase):
         self.mock_app.icons = {}
 
         # Mock ToolTip class to verify instantiation
-        self.patcher = patch('src.main.ToolTip')
-        self.mock_tooltip = self.patcher.start()
-        
-        # Mock ctk components used in ProjectCard
-        self.ctk_patcher = patch('src.main.ctk')
-        self.mock_ctk = self.ctk_patcher.start()
+        self.original_tooltip = main.ToolTip
+        self.mock_tooltip = MagicMock()
+        main.ToolTip = self.mock_tooltip
 
     def tearDown(self):
-        self.patcher.stop()
-        self.ctk_patcher.stop()
+        main.ToolTip = self.original_tooltip
 
     def test_btn_accepts_tooltip(self):
         """Test that _btn accepts a tooltip argument and creates a ToolTip."""
         # Mock parent frame
-        mock_parent = MagicMock()
-        
-        # We need to mock ProjectCard's parent class CTkFrame
-        with patch('src.main.ctk.CTkFrame'):
+        mock_parent = MockWidget()
+        # Mock the controls frame which is created in __init__
+        with patch('customtkinter.CTkFrame', MockWidget):
             card = main.ProjectCard(mock_parent, self.mock_app, "TestProject", "Local")
-            # Clear previous calls from __init__
-            self.mock_ctk.CTkButton.reset_mock()
-            
+            # card.controls is created in __init__
+
             # Call _btn with tooltip
             card._btn("Test Button", lambda: None, tooltip="Helpful text")
 
             # Verify ToolTip was instantiated
             self.assertTrue(self.mock_tooltip.called, "ToolTip class was not instantiated")
-            
+
+            # Check arguments: ToolTip(widget, text)
             args, _ = self.mock_tooltip.call_args
             tooltip_text = args[1]
+
             self.assertEqual(tooltip_text, "Helpful text")
 
     def test_btn_no_tooltip(self):
         """Test that _btn works without tooltip."""
-        mock_parent = MagicMock()
-        
-        with patch('src.main.ctk.CTkFrame'):
+        mock_parent = MockWidget()
+        with patch('customtkinter.CTkFrame', MockWidget):
             card = main.ProjectCard(mock_parent, self.mock_app, "TestProject", "Local")
-            
+
             self.mock_tooltip.reset_mock()
             card._btn("Test Button", lambda: None)
 

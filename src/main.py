@@ -973,14 +973,18 @@ class ProjectCard(ctk.CTkFrame):
 
     def _populate_controls(self):
         # Re-create buttons every time to ensure fresh state/bindings
-        if self.status == "Local":
+        if self.status in ["Local", "Synced"]:
             self._btn("Folder", lambda: os.startfile(os.path.join(os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE), self.name)), color="gray", icon=self.app.icons.get("folder"), tooltip="Open project folder in File Explorer")
             self._btn("Studio", lambda: self.app.open_studio(self.name), color="#3DDC84", text_color="black", icon=self.app.icons.get("android_studio"), tooltip="Open in Android Studio")
             self._btn("AntiG", lambda: self.app.open_antigravity(self.name), color="#9333ea", icon=self.app.icons.get("antigravity"), tooltip="Open Python Antigravity (Easter Egg)")
             self._btn("Config", lambda: ProjectConfigWindow(self.app, self.name, os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)), color="#64748b", icon=self.app.icons.get("config_cog"), tooltip="Open Project Configuration")
             self._btn("Deactivate", lambda: self.app.deactivate_project(self.name), color="#ef4444", icon=self.app.icons.get("cloud"), tooltip="Offload project to Cloud Backup")
-        else:
+        
+        if self.status == "Cloud":
             self._btn("Activate", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"), tooltip="Restore project from Cloud Backup")
+            self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"), tooltip="Remove from list (keeps files)")
+        elif self.status == "Synced":
+            self._btn("Restore", lambda: self.app.activate_project(self.name), color="#3b82f6", icon=self.app.icons.get("activate"), tooltip="Force Restore from Cloud (Overwrites Local)")
             self._btn("Forget", lambda: self.app.forget_project(self.name), color="transparent", text_color="red", icon=self.app.icons.get("quit"), tooltip="Remove from list (keeps files)")
 
     def _btn(self, txt, cmd, color=None, text_color=None, icon=None, tooltip=None):
@@ -1026,9 +1030,18 @@ class ProjectCard(ctk.CTkFrame):
             col = "gray"
             text = f"{icon} {self.name} (Working...)"
         else:
-            icon = "☁️" if self.status == "Cloud" else "📂"
-            col = "#facc15" if self.status == "Cloud" else "#4ade80"
-            text = f"{icon} {self.name}"
+            if self.status == "Synced":
+                icon = "✨"
+                col = "#3b82f6"
+                text = f"{icon} {self.name} (Synced)"
+            elif self.status == "Cloud":
+                icon = "☁️"
+                col = "#facc15"
+                text = f"{icon} {self.name}"
+            else:
+                icon = "📂"
+                col = "#4ade80"
+                text = f"{icon} {self.name}"
 
         self.lbl = ctk.CTkLabel(self.header, text=text, font=("", 14, "bold"), text_color=col)
         self.lbl.pack(side="left")
@@ -1104,11 +1117,12 @@ class ProjectManagerApp(ctk.CTk):
                 
                 batch = self.db.batch()
                 for name, status in registry.items():
-                    if name.lower() in HIDDEN_PROJECTS: continue
-                    
-                    project_path = os.path.join(root, name) if status == "Local" else os.path.join(drive_root or "", name)
+                    if name.lower() in HIDDEN_PROJECTS:
+                        continue
+
+                    project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name) if status in ["Local", "Synced"] else os.path.join(DRIVE_ROOT_FOLDER_ID or "", name)
                     manifest_path = os.path.join(project_path, "omni.json")
-                    
+                        
                     project_data = {
                         "name": name,
                         "status": status,
@@ -1516,7 +1530,7 @@ class ProjectManagerApp(ctk.CTk):
     def _project_path_for_status(self, name, status):
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         drive_root = self._drive_root()
-        if status == "Local":
+        if status in ["Local", "Synced"]:
             return os.path.join(root, name)
         if not drive_root:
             return None
@@ -1860,7 +1874,7 @@ class ProjectManagerApp(ctk.CTk):
 
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         reg = load_registry(self)
-        local_names = [n for n, s in reg.items() if s == "Local"]
+        local_names = [n for n, s in reg.items() if s in ["Local", "Synced"]]
         if not local_names:
             self.log("ℹ️ No local projects to deactivate.")
         for name in local_names:
@@ -1900,9 +1914,27 @@ class ProjectManagerApp(ctk.CTk):
         registry = {}
         registry.update(self._load_cloud_reg())
         registry.update(self._load_local_reg())
-        for f in local_folders: registry[f] = "Local"
-        for f in cloud_folders:
-            if registry.get(f) != "Local": registry[f] = "Cloud"
+        
+        local_set = set(local_folders)
+        cloud_set = set(cloud_folders)
+        
+        # Determine status based on presence in both locations
+        all_names = local_set | cloud_set | set(registry.keys())
+        for name in all_names:
+            if name.lower() in hidden: continue
+            
+            in_local = name in local_set
+            in_cloud = name in cloud_set
+            
+            if in_local and in_cloud:
+                registry[name] = "Synced"
+            elif in_local:
+                registry[name] = "Local"
+            elif in_cloud:
+                registry[name] = "Cloud"
+            # If in registry but not on disk, keep existing or default to Cloud
+            elif name not in registry:
+                registry[name] = "Cloud"
 
         self._save_reg(registry)
 
@@ -2206,7 +2238,7 @@ class ProjectManagerApp(ctk.CTk):
         # Get all other active projects
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         all_projects = load_registry(self)
-        other_active_projects = [p for p, s in all_projects.items() if s == "Local" and p != name]        
+        other_active_projects = [p for p, s in all_projects.items() if s in ["Local", "Synced"] and p != name]        
 
         # Get all software dependencies from other active projects
         other_dependencies = set()

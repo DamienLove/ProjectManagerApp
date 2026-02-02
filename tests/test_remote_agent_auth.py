@@ -3,17 +3,15 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Add src to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-
 # Define a real Exception class for mocking HTTPException
 class MockHTTPException(Exception):
     def __init__(self, status_code, detail=None):
         self.status_code = status_code
         self.detail = detail
 
-# Mock dependencies
+# Mock dependencies BEFORE any imports from src
 mock_fastapi = MagicMock()
+# Ensure HTTPException is the CLASS, not a Mock object
 mock_fastapi.HTTPException = MockHTTPException
 mock_fastapi.Request = MagicMock
 mock_fastapi.WebSocket = MagicMock
@@ -28,6 +26,9 @@ sys.modules["dotenv"] = MagicMock()
 sys.modules["uvicorn"] = MagicMock()
 sys.modules["fastapi"] = mock_fastapi
 sys.modules["fastapi.responses"] = MagicMock()
+
+# Add src to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 class TestRemoteAgentAuth(unittest.TestCase):
     def setUp(self):

@@ -431,7 +431,7 @@ def sync_to_firestore():
             if name.lower() in HIDDEN_PROJECTS:
                 continue
 
-            project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name) if status == "Local" else os.path.join(DRIVE_ROOT_FOLDER_ID or "", name)
+            project_path = os.path.join(LOCAL_WORKSPACE_ROOT, name) if status in ["Local", "Synced"] else os.path.join(DRIVE_ROOT_FOLDER_ID or "", name)
             manifest_path = os.path.join(project_path, "omni.json")
 
             project_data = {
