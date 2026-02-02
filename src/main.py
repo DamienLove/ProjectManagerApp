@@ -2082,18 +2082,32 @@ class ProjectManagerApp(ctk.CTk):
     def _robust_move_to_backup(self, src, dst, name):
         try:
             # 1. Process External Resources (Move into project Assets folder)
+            self.log(f"📦 Processing external resources for {name}...")
             self._backup_project_resources(src)
 
             # 1.5 Uninstall unused software
             self._uninstall_software_if_unused(src, name)
 
             # 2. Copy Tree (Safely across drives)
-            self.log(f"📤 Syncing to backup: {dst}")
+            self.log(f"📤 Syncing project files to backup...")
             self._copy_with_progress(src, dst)
 
             # 3. Force Delete Local
-            self.log(f"🗑️ Cleaning local storage (Force unlocking Git)...")
-            shutil.rmtree(src, onerror=force_remove_readonly)
+            self.log(f"🗑️ Deleting local files...")
+            
+            # Small retry loop for rmtree (handles transient file locks)
+            success = False
+            for i in range(3):
+                try:
+                    shutil.rmtree(src, onerror=force_remove_readonly)
+                    success = True
+                    break
+                except Exception as e:
+                    if i < 2:
+                        self.log(f"   ⚠️ Retrying deletion ({i+1}/3)...")
+                        time.sleep(1)
+                    else:
+                        raise e
 
             self.log(f"✅ {name} Offloaded Successfully.")
             reg = load_registry(self); reg[name] = "Cloud"; self._save_reg(reg)
@@ -2101,6 +2115,9 @@ class ProjectManagerApp(ctk.CTk):
             self.sync_to_firestore()
         except Exception as e:
             self.log(f"❌ Transfer Failed: {e}", "red")
+            # If we fail here, the project might be in a half-copied state
+            # but since we didn't delete 'src', it will show as 'Synced' next refresh.
+            self.after(0, self._refresh_projects)
 
     def activate_project(self, name):
         card = self.project_cards.get(name)
@@ -2135,12 +2152,15 @@ class ProjectManagerApp(ctk.CTk):
 
     def _robust_move_to_local(self, src, dst, name):
         try:
-            self.log(f"⬇️ Restoring from {src}...")
+            self.log(f"⬇️ Syncing files from backup...")
             # We can use the same progress copy here
             self._copy_with_progress(src, dst)
 
             # Restore resources/installs
+            self.log(f"📦 Restoring external resources...")
             self._restore_project_resources(dst)
+            
+            self.log(f"💾 Checking software dependencies...")
             self._check_install_software(dst)
 
             # Delete Backup (Only if you want it moved, otherwise comment this)
@@ -2152,6 +2172,7 @@ class ProjectManagerApp(ctk.CTk):
             self.sync_to_firestore()
         except Exception as e:
             self.log(f"❌ Restore Failed: {e}", "red")
+            self.after(0, self._refresh_projects)
 
     # --- RESOURCE HANDLERS ---
     def _backup_project_resources(self, project_path):
@@ -2364,8 +2385,23 @@ class ProjectManagerApp(ctk.CTk):
     def forget_project(self, name):
         reg = load_registry(self); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()        
 
-    def log(self, m, col=None):
-        self.log_box.configure(state="normal"); self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n"); self.log_box.see("end"); self.log_box.configure(state="disabled")
+        def log(self, m, col=None):
+
+            def _log():
+
+                try:
+
+                    self.log_box.configure(state="normal")
+
+                    self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n")
+
+                    self.log_box.see("end")
+
+                    self.log_box.configure(state="disabled")
+
+                except: pass
+
+            self.after(0, _log)
 
     def on_close(self):
         self._minimize_to_tray()
