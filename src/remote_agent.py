@@ -59,6 +59,12 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _str_env(name: str, default: str) -> str:
+    """Read string env var with safe fallback for blank values."""
+    raw = os.getenv(name, "").strip()
+    return raw if raw else default
+
+
 def save_env_setting(key: str, value: str) -> None:
     """Persist env setting to secrets.env for other modules (sync UI, plugin)."""
     try:
@@ -87,7 +93,7 @@ def save_env_setting(key: str, value: str) -> None:
     except Exception:
         pass
 
-REMOTE_BIND_HOST = os.getenv("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
+REMOTE_BIND_HOST = _str_env("REMOTE_BIND_HOST", "0.0.0.0")  # Default to all interfaces
 REMOTE_PUBLIC_HOST = os.getenv("REMOTE_PUBLIC_HOST", "")  # Will be auto-set by tunnel
 REMOTE_PORT = _int_env("REMOTE_PORT", 8765)
 IDE_PORT = _int_env("IDE_PORT", 8766)
