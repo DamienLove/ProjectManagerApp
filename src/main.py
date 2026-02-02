@@ -786,6 +786,9 @@ class SettingsWindow(ctk.CTkToplevel):
             if entry:
                 entry.delete(0, "end")
                 entry.insert(0, settings["REMOTE_PORT"])
+        # Avoid persisting an empty bind host (blank breaks agent startup).
+        if not settings.get("REMOTE_BIND_HOST"):
+            settings.pop("REMOTE_BIND_HOST", None)
         
         # Merge with existing env file to preserve comments/other vars
         existing = {}
@@ -795,7 +798,10 @@ class SettingsWindow(ctk.CTkToplevel):
                     if "=" in line and not line.strip().startswith("#"):
                         k, v = line.split("=", 1)
                         existing[k.strip()] = v.strip()
-        
+
+        if "REMOTE_BIND_HOST" not in settings:
+            existing.pop("REMOTE_BIND_HOST", None)
+
         existing.update(settings)
         
         with open(self.env, "w") as f:
@@ -2227,7 +2233,7 @@ class ProjectManagerApp(ctk.CTk):
         if agent_cmd is None:
             agent_script = os.path.join(BASE_DIR, "src", "remote_agent.py")
             if os.path.exists(agent_script):
-                agent_cmd = [sys.executable, agent_script]
+                agent_cmd = [sys.executable, "-u", agent_script]
 
         if agent_cmd:
             self.log("🚀 Starting Remote Agent...")
@@ -2252,10 +2258,27 @@ class ProjectManagerApp(ctk.CTk):
                 creationflags=creationflags
             )
             # Log output in real-time
+            watch_tokens = (
+                "listening on",
+                "server ready on",
+                "uvicorn running on",
+                "[startup]",
+                "[firebase]",
+                "[tunnel]",
+                "error",
+                "exception",
+                "traceback",
+            )
             for line in self.agent_process.stdout:
-                if "listening on" in line or "error" in line.lower():
-                    self.log(f"📡 Agent: {line.strip()}")
-            self.agent_process.wait()
+                cleaned = line.strip()
+                if not cleaned:
+                    continue
+                lower = cleaned.lower()
+                if any(token in lower for token in watch_tokens):
+                    self.log(f"📡 Agent: {cleaned}")
+            exit_code = self.agent_process.wait()
+            if exit_code != 0:
+                self.log(f"⚠️ Remote Agent exited with code {exit_code}", "red")
         except Exception as e:
             self.log(f"⚠️ Remote Agent error: {e}", "red")
 
