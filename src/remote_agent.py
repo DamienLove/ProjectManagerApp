@@ -120,6 +120,9 @@ ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
 
+# Pre-compiled regex for parsing winget output (Performance Optimization)
+_WINGET_SPLIT_PATTERN = re.compile(r"\s{2,}")
+
 # ============================================================================
 # CLOUDFLARE TUNNEL MANAGER
 # ============================================================================
@@ -547,20 +550,14 @@ def is_path_safe(path: str) -> bool:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
         return False
-    # Otherwise block only obviously dangerous roots.
-    for p_abs in ABS_PROTECTED_PATHS:
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
-
     # Sentinel Security Fix: Deny by default.
     # If path is not in workspace and not in allowed roots, block it.
     return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
-    if not os.path.exists(LOCAL_REGISTRY_PATH):
-        return {}
     try:
+        # Performance Optimization: Skip explicit exists check (LBYL) to avoid race condition and extra syscall
         mtime = os.path.getmtime(LOCAL_REGISTRY_PATH)
         if _registry_cache is not None and mtime == _registry_mtime:
             return _registry_cache.copy()
@@ -701,7 +698,8 @@ def parse_winget_list_output(output: str):
             continue
         if "No installed package found" in line:
             continue
-        parts = re.split(r"\s{2,}", line.strip())
+        # Performance Optimization: Use pre-compiled regex
+        parts = _WINGET_SPLIT_PATTERN.split(line.strip())
         if len(parts) < 2:
             continue
         name = parts[0].strip()

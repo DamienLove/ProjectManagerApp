@@ -67,6 +67,9 @@ ctk.set_default_color_theme(os.getenv("UI_THEME", "blue"))
 # Hidden projects list (loaded from env, used by sync_to_firestore)
 HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").split(",") if h.strip()]
 
+# Pre-compiled regex for parsing winget output (Performance Optimization)
+_WINGET_SPLIT_PATTERN = re.compile(r"\s{2,}")
+
 # --- UTILS ---
 def force_remove_readonly(func, path, excinfo):
     """Handler for shutil.rmtree to unlock Git/Read-only files."""
@@ -141,7 +144,8 @@ def parse_winget_list_output(output: str):
             continue
         if "No installed package found" in line:
             continue
-        parts = re.split(r"\s{2,}", line.strip())
+        # Performance Optimization: Use pre-compiled regex
+        parts = _WINGET_SPLIT_PATTERN.split(line.strip())
         if len(parts) < 2:
             continue
         name = parts[0].strip()
