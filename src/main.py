@@ -672,10 +672,17 @@ class SettingsWindow(ctk.CTkToplevel):
             
             # Special buttons for specific advanced fields
             if k == "REMOTE_ACCESS_TOKEN":
-                ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1").pack(side="left", padx=(2,0))
+                btn_gen = ctk.CTkButton(f, text="Gen", width=40, command=self._generate_token, fg_color="#6366f1")
+                btn_gen.pack(side="left", padx=(2,0))
+                ToolTip(btn_gen, "Generate new secure token")
             elif k == "REMOTE_PUBLIC_HOST":
-                ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316").pack(side="left", padx=(2,0))
-                ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9").pack(side="left", padx=(2,0))
+                btn_tun = ctk.CTkButton(f, text="Tun", width=40, command=self._detect_tunnel_url, fg_color="#f97316")
+                btn_tun.pack(side="left", padx=(2,0))
+                ToolTip(btn_tun, "Auto-detect Cloudflare Tunnel URL")
+
+                btn_lan = ctk.CTkButton(f, text="LAN", width=40, command=self._detect_lan_ip, fg_color="#0ea5e9")
+                btn_lan.pack(side="left", padx=(2,0))
+                ToolTip(btn_lan, "Auto-detect Local LAN IP")
 
         # Help text in advanced
         help_text = "Use Gen to create a secure token. Tun/LAN to auto-detect hosts.\nThese settings are usually managed automatically."
@@ -1454,18 +1461,26 @@ class ProjectManagerApp(ctk.CTk):
 
         PopupMenu(self, self.menu_btn, menu_items)
 
+    def _scan_folders(self, path):
+        """Efficiently list directories in a path using os.scandir."""
+        folders = set()
+        if path and os.path.exists(path):
+            try:
+                with os.scandir(path) as it:
+                    for entry in it:
+                        if entry.is_dir():
+                            folders.add(entry.name)
+            except Exception:
+                pass
+        return folders
+
     def _get_projects_snapshot(self):
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         drive_root = self._drive_root()
 
         # Scan folders to keep registry fresh without touching UI.
-        local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))} if os.path.exists(root) else set()
-        cloud_folders = set()
-        if drive_root and os.path.exists(drive_root):
-            try:
-                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
-            except Exception:
-                cloud_folders = set()
+        local_folders = self._scan_folders(root)
+        cloud_folders = self._scan_folders(drive_root)
 
         registry = {}
         registry.update(self._load_cloud_reg())
@@ -1855,14 +1870,10 @@ class ProjectManagerApp(ctk.CTk):
         hidden.extend(["$recycle.bin", CLOUD_META_DIRNAME.lower()])
 
         # 1. Scan Local
-        local_folders = {f for f in os.listdir(root) if os.path.isdir(os.path.join(root, f))}
+        local_folders = self._scan_folders(root)
 
         # 2. Scan Cloud (Drive)
-        cloud_folders = set()
-        if drive_root and os.path.exists(drive_root):
-            try:
-                cloud_folders = {f for f in os.listdir(drive_root) if os.path.isdir(os.path.join(drive_root, f))}
-            except: pass
+        cloud_folders = self._scan_folders(drive_root)
 
         # 3. Build Registry
         registry = {}
