@@ -545,7 +545,10 @@ def is_path_safe(path: str) -> bool:
     for p_abs in ABS_PROTECTED_PATHS:
         if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
             return False
-    return True
+
+    # Sentinel Security Fix: Deny by default.
+    # If path is not in workspace and not in allowed roots, block it.
+    return False
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
@@ -704,12 +707,6 @@ def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
     if not os.path.exists(manifest):
         return
-    try:
-        with open(manifest, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return
-
     software_list = data.get("software", [])
     if not software_list:
         return
@@ -731,6 +728,10 @@ def check_install_software(project_path: str) -> None:
         log(f"Winget batch list failed: {e}")
 
     for app_id in software_list:
+        if app_id.strip().startswith("-"):
+            log(f"Skipping potentially unsafe software ID: {app_id}")
+            continue
+
         if app_id.lower() in installed_ids:
             continue
 
