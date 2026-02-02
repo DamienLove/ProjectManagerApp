@@ -1282,7 +1282,11 @@ class ProjectManagerApp(ctk.CTk):
                 err = data.get("error", {}).get("message", "Login failed")
                 self.login_status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
         except Exception as e:
-            self.login_status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+            try:
+                if self.login_status_lbl.winfo_exists():
+                    self.login_status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+            except:
+                pass
 
     def _toggle_inline_password_visibility(self):
         self.login_password_entry.configure(
@@ -2407,23 +2411,15 @@ class ProjectManagerApp(ctk.CTk):
     def forget_project(self, name):
         reg = load_registry(self); reg.pop(name, None); self._save_reg(reg); self._refresh_projects()        
 
-        def log(self, m, col=None):
-
-            def _log():
-
-                try:
-
-                    self.log_box.configure(state="normal")
-
-                    self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n")
-
-                    self.log_box.see("end")
-
-                    self.log_box.configure(state="disabled")
-
-                except: pass
-
-            self.after(0, _log)
+    def log(self, m, col=None):
+        def _log():
+            try:
+                self.log_box.configure(state="normal")
+                self.log_box.insert("end", f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {m}\n")
+                self.log_box.see("end")
+                self.log_box.configure(state="disabled")
+            except: pass
+        self.after(0, _log)
 
     def on_close(self):
         self._minimize_to_tray()
