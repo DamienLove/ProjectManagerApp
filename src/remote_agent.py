@@ -53,6 +53,14 @@ LOG_PATH = os.path.join(CONFIG_DIR, "remote_agent.log")
 
 load_dotenv(ENV_PATH)
 
+SENSITIVE_PATTERN = re.compile(r'(?i)(password|token|key|secret|authorization)(=|\s+)([^&\s]+)')
+
+def sanitize_command(cmd: str) -> str:
+    """Redact sensitive information from command strings."""
+    if not cmd:
+        return ""
+    return SENSITIVE_PATTERN.sub(r'\1\2***', cmd)
+
 
 def _int_env(name: str, default: int) -> int:
     """Read integer env var with safe fallback for blank/invalid values."""
@@ -1085,7 +1093,7 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="cmd is required")
     if cwd and not is_path_safe(cwd):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
-    log(f"Command: {cmd} (cwd={cwd})")
+    log(f"Command: {sanitize_command(cmd)} (cwd={cwd})")
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1149,7 +1157,7 @@ async def ws_terminal(ws: WebSocket):
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
-                log(f"WS run: {cmd}")
+                log(f"WS run: {sanitize_command(cmd)}")
                 try:
                     session_id = start_command(loop, ws, cmd, cwd, env_overrides)
                     await send_ws(ws, {"type": "started", "sessionId": session_id})
