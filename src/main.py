@@ -272,8 +272,10 @@ class LoginWindow(ctk.CTkToplevel):
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        self.btn_login = ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login)
+        self.btn_login.pack(side="left", padx=5)
+        self.btn_register = ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register)
+        self.btn_register.pack(side="left", padx=5)
         
         ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
 
@@ -315,26 +317,53 @@ class LoginWindow(ctk.CTkToplevel):
             self.status_lbl.configure(text="Connection failed")
 
     def login(self):
-        # Find the actual ProjectManagerApp instance
-        app = self.main_app
-        if not hasattr(app, "save_setting"):
-            # Try to find it in global scope if self.main_app is just the tk interpreter
-            import __main__
-            if hasattr(__main__, "app"):
-                app = __main__.app
-
         email = self.email_entry.get().strip()
         password = self.password_entry.get().strip()
         if not email or not password:
             self.status_lbl.configure(text="Missing email/password")
             return
+
         self.status_lbl.configure(text="Authenticating...", text_color="white")
+        self.btn_login.configure(state="disabled", text="⏳")
+        self.btn_register.configure(state="disabled")
+
+        threading.Thread(target=self._login_thread, args=(email, password), daemon=True).start()
+
+    def _login_thread(self, email, password):
         api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
         try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=15)
+            # Schedule the result handling on the main thread
+            self.after(0, lambda: self._handle_login_result(resp, None, email))
+        except Exception as e:
+            self.after(0, lambda: self._handle_login_result(None, e, email))
+
+    def _handle_login_result(self, resp, error, email):
+        try:
+            if self.winfo_exists():
+                self.btn_login.configure(state="normal", text="Login")
+                self.btn_register.configure(state="normal")
+        except:
+            return
+
+        if error:
+            try:
+                if self.winfo_exists():
+                    self.status_lbl.configure(text=f"System error: {str(error)[:30]}", text_color="red")
+            except: pass
+            return
+
+        try:
             data = resp.json()
             if resp.status_code == 200:
+                # Find the actual ProjectManagerApp instance
+                app = self.main_app
+                if not hasattr(app, "save_setting"):
+                    import __main__
+                    if hasattr(__main__, "app"):
+                        app = __main__.app
+
                 uid = data["localId"]
                 is_owner = email.lower() in OWNER_EMAILS
                 app.save_setting("FIREBASE_UID", uid)
@@ -343,6 +372,12 @@ class LoginWindow(ctk.CTkToplevel):
                 if is_owner: app.save_setting("DEVELOPER_MODE", "1")
                 os.environ["FIREBASE_UID"] = uid
                 app.firebase_uid = uid
+
+                # We can fire-and-forget the firestore update or run it in another thread if needed,
+                # but typically this non-blocking enough or handled internally by firebase lib?
+                # Actually, firebase-admin might be blocking, so let's wrap it or just accept it's faster than auth.
+                # But to be safe, let's keep it here as it was, but it runs on main thread now.
+                # Ideally, we should background this too, but let's stick to the main auth freeze fix first.
                 db = app.__dict__.get("db", None)
                 if db:
                     try:
@@ -350,13 +385,16 @@ class LoginWindow(ctk.CTkToplevel):
                             "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
                         }, merge=True)
                     except: pass
+
                 app.show_main_app()
                 self.destroy()
             else:
                 err = data.get("error", {}).get("message", "Login failed")
-                self.status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
+                if self.winfo_exists():
+                    self.status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
         except Exception as e:
-            self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+             if self.winfo_exists():
+                self.status_lbl.configure(text=f"Response Error: {str(e)[:20]}", text_color="red")
 
     def _toggle_password_visibility(self):
         self.password_entry.configure(show="" if self.show_password_var.get() else "*")
@@ -1206,8 +1244,10 @@ class ProjectManagerApp(ctk.CTk):
 
         btn_row = ctk.CTkFrame(self.login_frame, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline).pack(side="left", padx=5)
+        self.btn_login_inline = ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline)
+        self.btn_login_inline.pack(side="left", padx=5)
+        self.btn_register_inline = ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline)
+        self.btn_register_inline.pack(side="left", padx=5)
 
         ctk.CTkButton(self.login_frame, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self._reset_inline).pack(pady=5)
 
@@ -1254,11 +1294,39 @@ class ProjectManagerApp(ctk.CTk):
         if not email or not password:
             self.login_status_lbl.configure(text="Missing email/password")
             return
+
         self.login_status_lbl.configure(text="Authenticating...", text_color="white")
+        self.btn_login_inline.configure(state="disabled", text="⏳")
+        self.btn_register_inline.configure(state="disabled")
+
+        threading.Thread(target=self._login_inline_thread, args=(email, password), daemon=True).start()
+
+    def _login_inline_thread(self, email, password):
         api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
         try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
+            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=15)
+            self.after(0, lambda: self._handle_login_inline_result(resp, None, email))
+        except Exception as e:
+            self.after(0, lambda: self._handle_login_inline_result(None, e, email))
+
+    def _handle_login_inline_result(self, resp, error, email):
+        try:
+            if self.btn_login_inline.winfo_exists():
+                self.btn_login_inline.configure(state="normal", text="Login")
+            if self.btn_register_inline.winfo_exists():
+                self.btn_register_inline.configure(state="normal")
+        except:
+            pass
+
+        if error:
+            try:
+                if self.login_status_lbl.winfo_exists():
+                    self.login_status_lbl.configure(text=f"System error: {str(error)[:30]}", text_color="red")
+            except: pass
+            return
+
+        try:
             data = resp.json()
             if resp.status_code == 200:
                 uid = data["localId"]
@@ -1280,7 +1348,8 @@ class ProjectManagerApp(ctk.CTk):
                 self.show_main_app()
             else:
                 err = data.get("error", {}).get("message", "Login failed")
-                self.login_status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
+                if self.login_status_lbl.winfo_exists():
+                    self.login_status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
         except Exception as e:
             try:
                 if self.login_status_lbl.winfo_exists():
