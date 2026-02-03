@@ -52,15 +52,17 @@ class TestRemoteAgentPathTraversal(unittest.TestCase):
     @patch("shutil.move")
     @patch("os.remove")
     @patch("os.path.exists")
+    @patch("os.path.getmtime")
     @patch("os.path.isdir")
     @patch("os.makedirs")
     @patch("json.load")
     @patch("builtins.open", new_callable=mock_open)
-    def test_backup_external_resources_path_traversal(self, mock_file, mock_json_load, mock_makedirs, mock_isdir, mock_exists, mock_remove, mock_move, mock_copy2, mock_log, mock_is_safe):
+    def test_backup_external_resources_path_traversal(self, mock_file, mock_json_load, mock_makedirs, mock_isdir, mock_getmtime, mock_exists, mock_remove, mock_move, mock_copy2, mock_log, mock_is_safe):
         """Test that backup_external_resources prevents accessing unsafe external paths."""
 
         # Setup: Manifest points to a sensitive system file
         unsafe_path = "/etc/passwd" if os.name != 'nt' else "C:\\Windows\\System32\\config\\SAM"
+        mock_getmtime.return_value = 12345.6
         mock_json_load.return_value = {"external_paths": [unsafe_path]}
 
         # Mock is_path_safe to return False for the unsafe path

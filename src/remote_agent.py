@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import hashlib
 import json
+import copy
 import os
 import re
 import secrets
@@ -446,13 +447,8 @@ def sync_to_firestore():
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
 
-            if os.path.exists(manifest_path):
-                try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
-                        manifest = json.load(f)
-                    project_data.update(manifest)
-                except Exception:
-                    pass
+            manifest = load_json_cached(manifest_path)
+            project_data.update(manifest)
 
             doc_ref = projects_ref.document(name)
             batch.set(doc_ref, project_data, merge=True)
@@ -499,6 +495,9 @@ _project_locks: Dict[str, threading.Lock] = {}
 _registry_lock = threading.Lock()
 _registry_cache: Optional[Dict[str, str]] = None
 _registry_mtime: float = 0.0
+
+_json_cache_lock = threading.Lock()
+_json_cache = {}
 
 
 def log(msg: str) -> None:
@@ -555,6 +554,28 @@ def is_path_safe(path: str) -> bool:
     # Sentinel Security Fix: Deny by default.
     # If path is not in workspace and not in allowed roots, block it.
     return False
+
+def load_json_cached(path: str) -> dict:
+    global _json_cache
+    if not path or not os.path.exists(path):
+        return {}
+
+    try:
+        mtime = os.path.getmtime(path)
+        with _json_cache_lock:
+            if path in _json_cache:
+                cached_mtime, cached_data = _json_cache[path]
+                if mtime == cached_mtime:
+                    return copy.deepcopy(cached_data)
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        with _json_cache_lock:
+            _json_cache[path] = (mtime, data)
+        return copy.deepcopy(data)
+    except Exception:
+        return {}
 
 def load_registry() -> Dict[str, str]:
     global _registry_cache, _registry_mtime
@@ -617,12 +638,8 @@ def force_remove_readonly(func, path, excinfo):
 
 def backup_external_resources(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
-    if not os.path.exists(manifest):
-        return
-    try:
-        with open(manifest, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
+    data = load_json_cached(manifest)
+    if not data:
         return
     assets_dir = os.path.join(project_path, "_omni_assets")
     os.makedirs(assets_dir, exist_ok=True)
@@ -721,12 +738,8 @@ def parse_winget_list_output(output: str):
 
 def check_install_software(project_path: str) -> None:
     manifest = os.path.join(project_path, "omni.json")
-    if not os.path.exists(manifest):
-        return
-    try:
-        with open(manifest, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
+    data = load_json_cached(manifest)
+    if not data:
         return
 
     software_list = data.get("software", [])
