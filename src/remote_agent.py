@@ -120,6 +120,23 @@ ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
 
+# Regex to catch sensitive keys in commands (password, token, key, secret)
+# Matches: key=value, key="value", key='value', key: value
+# Excludes pipe symbol from value to avoid eating into next command.
+SENSITIVE_PATTERN = re.compile(
+    r'(?i)\b(password|pwd|token|secret|key|auth|api_key|access_token)[=:\s]+(["\']?)([^&|;]+?)(\2)(?=\s|$|&|\||;)',
+    re.IGNORECASE
+)
+
+def sanitize_command(cmd: str) -> str:
+    """Redact sensitive values from command strings."""
+    if not cmd:
+        return ""
+    try:
+        return SENSITIVE_PATTERN.sub(r'\1=***REDACTED***', cmd)
+    except Exception:
+        return cmd
+
 # ============================================================================
 # CLOUDFLARE TUNNEL MANAGER
 # ============================================================================
@@ -1085,7 +1102,7 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="cmd is required")
     if cwd and not is_path_safe(cwd):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
-    log(f"Command: {cmd} (cwd={cwd})")
+    log(f"Command: {sanitize_command(cmd)} (cwd={cwd})")
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1149,7 +1166,7 @@ async def ws_terminal(ws: WebSocket):
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
-                log(f"WS run: {cmd}")
+                log(f"WS run: {sanitize_command(cmd)}")
                 try:
                     session_id = start_command(loop, ws, cmd, cwd, env_overrides)
                     await send_ws(ws, {"type": "started", "sessionId": session_id})
