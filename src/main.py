@@ -272,10 +272,24 @@ class LoginWindow(ctk.CTkToplevel):
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register).pack(side="left", padx=5)
+        self.btn_login = ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self.login)
+        self.btn_login.pack(side="left", padx=5)
+        self.btn_register = ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self.register)
+        self.btn_register.pack(side="left", padx=5)
         
-        ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password).pack(pady=5)
+        self.btn_reset = ctk.CTkButton(self, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self.reset_password)
+        self.btn_reset.pack(pady=5)
+
+    def _set_loading(self, is_loading, message=None):
+        state = "disabled" if is_loading else "normal"
+        try:
+            self.btn_login.configure(state=state)
+            self.btn_register.configure(state=state)
+            self.btn_reset.configure(state=state)
+        except Exception:
+            pass
+        if message:
+            self.status_lbl.configure(text=message, text_color="white" if is_loading else "red")
 
     def register(self):
         email = self.email_entry.get().strip()
@@ -283,36 +297,51 @@ class LoginWindow(ctk.CTkToplevel):
         if not email or not password:
             self.status_lbl.configure(text="Email and password required")
             return
-        self.status_lbl.configure(text="Registering...", text_color="white")
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
-            if resp.status_code == 200:
-                self.status_lbl.configure(text="Account created! Logging in...", text_color="green")
-                self.login()
-            else:
-                err = resp.json().get("error", {}).get("message", "Registration failed")
-                self.status_lbl.configure(text=f"Error: {err}")
-        except:
-            self.status_lbl.configure(text="Connection error")
+
+        self._set_loading(True, "Registering...")
+
+        def task():
+            try:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+                resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+                if resp.status_code == 200:
+                    self.after(0, lambda: self.status_lbl.configure(text="Account created! Logging in...", text_color="green"))
+                    self.after(0, self.login)
+                else:
+                    err = resp.json().get("error", {}).get("message", "Registration failed")
+                    self.after(0, lambda: self.status_lbl.configure(text=f"Error: {err}", text_color="red"))
+            except:
+                self.after(0, lambda: self.status_lbl.configure(text="Connection error", text_color="red"))
+            finally:
+                self.after(0, lambda: self._set_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def reset_password(self):
         email = self.email_entry.get().strip()
         if not email:
             self.status_lbl.configure(text="Enter email first", text_color="orange")
             return
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
-            if resp.status_code == 200:
-                self.status_lbl.configure(text="Reset email sent!", text_color="green")
-            else:
-                err = resp.json().get("error", {}).get("message", "Error")
-                self.status_lbl.configure(text=f"Error: {err}")
-        except:
-            self.status_lbl.configure(text="Connection failed")
+
+        self._set_loading(True, "Sending reset email...")
+
+        def task():
+            try:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+                resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
+                if resp.status_code == 200:
+                    self.after(0, lambda: self.status_lbl.configure(text="Reset email sent!", text_color="green"))
+                else:
+                    err = resp.json().get("error", {}).get("message", "Error")
+                    self.after(0, lambda: self.status_lbl.configure(text=f"Error: {err}", text_color="red"))
+            except:
+                self.after(0, lambda: self.status_lbl.configure(text="Connection failed", text_color="red"))
+            finally:
+                self.after(0, lambda: self._set_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def login(self):
         # Find the actual ProjectManagerApp instance
@@ -328,35 +357,47 @@ class LoginWindow(ctk.CTkToplevel):
         if not email or not password:
             self.status_lbl.configure(text="Missing email/password")
             return
-        self.status_lbl.configure(text="Authenticating...", text_color="white")
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
-            data = resp.json()
-            if resp.status_code == 200:
-                uid = data["localId"]
-                is_owner = email.lower() in OWNER_EMAILS
-                app.save_setting("FIREBASE_UID", uid)
-                app.save_setting("FIREBASE_EMAIL", email)
-                app.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
-                if is_owner: app.save_setting("DEVELOPER_MODE", "1")
-                os.environ["FIREBASE_UID"] = uid
-                app.firebase_uid = uid
-                db = app.__dict__.get("db", None)
-                if db:
-                    try:
-                        db.collection("users").document(uid).set({
-                            "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
-                        }, merge=True)
-                    except: pass
-                app.show_main_app()
-                self.destroy()
-            else:
-                err = data.get("error", {}).get("message", "Login failed")
-                self.status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
-        except Exception as e:
-            self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
+
+        self._set_loading(True, "Authenticating...")
+
+        def task():
+            try:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+                resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
+                data = resp.json()
+
+                if resp.status_code == 200:
+                    self.after(0, lambda: self._handle_login_success(app, email, data))
+                else:
+                    err = data.get("error", {}).get("message", "Login failed")
+                    msg = "Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}"
+                    self.after(0, lambda: self.status_lbl.configure(text=msg, text_color="red"))
+            except Exception as e:
+                self.after(0, lambda: self.status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red"))
+            finally:
+                self.after(0, lambda: self._set_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _handle_login_success(self, app, email, data):
+        uid = data["localId"]
+        is_owner = email.lower() in OWNER_EMAILS
+        app.save_setting("FIREBASE_UID", uid)
+        app.save_setting("FIREBASE_EMAIL", email)
+        app.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
+        if is_owner: app.save_setting("DEVELOPER_MODE", "1")
+        os.environ["FIREBASE_UID"] = uid
+        app.firebase_uid = uid
+        db = app.__dict__.get("db", None)
+        if db:
+            try:
+                db.collection("users").document(uid).set({
+                    "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
+                }, merge=True)
+            except: pass
+        app.show_main_app()
+        self.destroy()
 
     def _toggle_password_visibility(self):
         self.password_entry.configure(show="" if self.show_password_var.get() else "*")
@@ -1206,10 +1247,24 @@ class ProjectManagerApp(ctk.CTk):
 
         btn_row = ctk.CTkFrame(self.login_frame, fg_color="transparent")
         btn_row.pack(pady=10)
-        ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline).pack(side="left", padx=5)
+        self.btn_inline_login = ctk.CTkButton(btn_row, text="Login", width=100, height=35, corner_radius=17, command=self._login_inline)
+        self.btn_inline_login.pack(side="left", padx=5)
+        self.btn_inline_register = ctk.CTkButton(btn_row, text="Register", width=100, height=35, corner_radius=17, fg_color="#22c55e", command=self._register_inline)
+        self.btn_inline_register.pack(side="left", padx=5)
 
-        ctk.CTkButton(self.login_frame, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self._reset_inline).pack(pady=5)
+        self.btn_inline_reset = ctk.CTkButton(self.login_frame, text="Forgot Password / Reset", fg_color="transparent", text_color="gray", command=self._reset_inline)
+        self.btn_inline_reset.pack(pady=5)
+
+    def _set_inline_loading(self, is_loading, message=None):
+        state = "disabled" if is_loading else "normal"
+        try:
+            self.btn_inline_login.configure(state=state)
+            self.btn_inline_register.configure(state=state)
+            self.btn_inline_reset.configure(state=state)
+        except Exception:
+            pass
+        if message:
+            self.login_status_lbl.configure(text=message, text_color="white" if is_loading else "red")
 
     def _register_inline(self):
         email = self.login_email_entry.get().strip()
@@ -1217,36 +1272,51 @@ class ProjectManagerApp(ctk.CTk):
         if not email or not password:
             self.login_status_lbl.configure(text="Email and password required")
             return
-        self.login_status_lbl.configure(text="Registering...", text_color="white")
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
-            if resp.status_code == 200:
-                self.login_status_lbl.configure(text="Account created! Logging in...", text_color="green")
-                self._login_inline()
-            else:
-                err = resp.json().get("error", {}).get("message", "Registration failed")
-                self.login_status_lbl.configure(text=f"Error: {err}")
-        except Exception:
-            self.login_status_lbl.configure(text="Connection error")
+
+        self._set_inline_loading(True, "Registering...")
+
+        def task():
+            try:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+                resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True})
+                if resp.status_code == 200:
+                    self.after(0, lambda: self.login_status_lbl.configure(text="Account created! Logging in...", text_color="green"))
+                    self.after(0, self._login_inline)
+                else:
+                    err = resp.json().get("error", {}).get("message", "Registration failed")
+                    self.after(0, lambda: self.login_status_lbl.configure(text=f"Error: {err}", text_color="red"))
+            except Exception:
+                self.after(0, lambda: self.login_status_lbl.configure(text="Connection error", text_color="red"))
+            finally:
+                self.after(0, lambda: self._set_inline_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _reset_inline(self):
         email = self.login_email_entry.get().strip()
         if not email:
             self.login_status_lbl.configure(text="Enter email first", text_color="orange")
             return
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
-            if resp.status_code == 200:
-                self.login_status_lbl.configure(text="Reset email sent!", text_color="green")
-            else:
-                err = resp.json().get("error", {}).get("message", "Error")
-                self.login_status_lbl.configure(text=f"Error: {err}")
-        except Exception:
-            self.login_status_lbl.configure(text="Connection failed")
+
+        self._set_inline_loading(True, "Sending reset email...")
+
+        def task():
+            try:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+                resp = requests.post(url, json={"email": email, "requestType": "PASSWORD_RESET"})
+                if resp.status_code == 200:
+                    self.after(0, lambda: self.login_status_lbl.configure(text="Reset email sent!", text_color="green"))
+                else:
+                    err = resp.json().get("error", {}).get("message", "Error")
+                    self.after(0, lambda: self.login_status_lbl.configure(text=f"Error: {err}", text_color="red"))
+            except Exception:
+                self.after(0, lambda: self.login_status_lbl.configure(text="Connection failed", text_color="red"))
+            finally:
+                self.after(0, lambda: self._set_inline_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _login_inline(self):
         email = self.login_email_entry.get().strip()
@@ -1254,39 +1324,54 @@ class ProjectManagerApp(ctk.CTk):
         if not email or not password:
             self.login_status_lbl.configure(text="Missing email/password")
             return
-        self.login_status_lbl.configure(text="Authenticating...", text_color="white")
-        api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
-        try:
-            resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
-            data = resp.json()
-            if resp.status_code == 200:
-                uid = data["localId"]
-                is_owner = email.lower() in OWNER_EMAILS
-                self.save_setting("FIREBASE_UID", uid)
-                self.save_setting("FIREBASE_EMAIL", email)
-                self.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
-                if is_owner:
-                    self.save_setting("DEVELOPER_MODE", "1")
-                os.environ["FIREBASE_UID"] = uid
-                self.firebase_uid = uid
-                if self.db:
-                    try:
-                        self.db.collection("users").document(uid).set({
-                            "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
-                        }, merge=True)
-                    except Exception:
-                        pass
-                self.show_main_app()
-            else:
-                err = data.get("error", {}).get("message", "Login failed")
-                self.login_status_lbl.configure(text="Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}", text_color="red")
-        except Exception as e:
+
+        self._set_inline_loading(True, "Authenticating...")
+
+        def task():
             try:
-                if self.login_status_lbl.winfo_exists():
-                    self.login_status_lbl.configure(text=f"System error: {str(e)[:30]}", text_color="red")
-            except:
+                api_key = "AIzaSyD4mFl_Qal_mi5mxWvi5jEEHwxszzCq1CU"
+                url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+                resp = requests.post(url, json={"email": email, "password": password, "returnSecureToken": True}, timeout=10)
+                data = resp.json()
+                if resp.status_code == 200:
+                    self.after(0, lambda: self._handle_inline_login_success(email, data))
+                else:
+                    err = data.get("error", {}).get("message", "Login failed")
+                    msg = "Invalid email or password" if err == "INVALID_LOGIN_CREDENTIALS" else f"Error: {err}"
+                    self.after(0, lambda: self.login_status_lbl.configure(text=msg, text_color="red"))
+            except Exception as e:
+                try:
+                    msg = f"System error: {str(e)[:30]}"
+                    self.after(0, lambda: self._safe_status_update(msg))
+                except:
+                    pass
+            finally:
+                self.after(0, lambda: self._set_inline_loading(False))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _safe_status_update(self, msg):
+        if self.login_status_lbl.winfo_exists():
+            self.login_status_lbl.configure(text=msg, text_color="red")
+
+    def _handle_inline_login_success(self, email, data):
+        uid = data["localId"]
+        is_owner = email.lower() in OWNER_EMAILS
+        self.save_setting("FIREBASE_UID", uid)
+        self.save_setting("FIREBASE_EMAIL", email)
+        self.save_setting("FIREBASE_DOCUMENT_PATH", f"users/{uid}")
+        if is_owner:
+            self.save_setting("DEVELOPER_MODE", "1")
+        os.environ["FIREBASE_UID"] = uid
+        self.firebase_uid = uid
+        if self.db:
+            try:
+                self.db.collection("users").document(uid).set({
+                    "email": email, "role": "owner" if is_owner else "user", "last_login": firestore.SERVER_TIMESTAMP
+                }, merge=True)
+            except Exception:
                 pass
+        self.show_main_app()
 
     def _toggle_inline_password_visibility(self):
         self.login_password_entry.configure(
