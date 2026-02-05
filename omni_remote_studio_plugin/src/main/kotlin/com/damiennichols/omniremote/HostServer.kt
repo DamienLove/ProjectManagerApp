@@ -11,6 +11,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.ToolWindowManager
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CompletableFuture
 import java.util.UUID
 import io.javalin.Javalin
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
@@ -88,8 +89,11 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
             post("/api/command") { ctx ->
                 val request = objectMapper.readValue(ctx.body(), CommandRequest::class.java)
                 onLog("Executing command: ${request.cmd}")
-                val response = executeCommand(request.cmd, request.cwd)
-                ctx.json(response)
+                ctx.future {
+                    executeCommand(request.cmd, request.cwd).thenAccept { response ->
+                        ctx.json(response)
+                    }
+                }
             }
 
             
@@ -395,18 +399,21 @@ class HostServer(private val project: Project, private val onLog: (String) -> Un
         return null
     }
 
-    private fun executeCommand(command: String, workingDir: String?): CommandResponse {
-        return try {
-            val process = ProcessBuilder(parseCommand(command))
-                .directory(workingDir?.let { java.io.File(it) } ?: project.basePath?.let { java.io.File(it) })
-                .redirectErrorStream(true)
-                .start()
+    private fun executeCommand(command: String, workingDir: String?): CompletableFuture<CommandResponse> {
+        val defaultDir = project.basePath
+        return CompletableFuture.supplyAsync {
+            try {
+                val process = ProcessBuilder(parseCommand(command))
+                    .directory(workingDir?.let { java.io.File(it) } ?: defaultDir?.let { java.io.File(it) })
+                    .redirectErrorStream(true)
+                    .start()
 
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-            CommandResponse(output, exitCode)
-        } catch (e: Exception) {
-            CommandResponse(e.message ?: "An error occurred", -1)
+                val output = process.inputStream.bufferedReader().readText()
+                val exitCode = process.waitFor()
+                CommandResponse(output, exitCode)
+            } catch (e: Exception) {
+                CommandResponse(e.message ?: "An error occurred", -1)
+            }
         }
     }
 
