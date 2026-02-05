@@ -2288,6 +2288,10 @@ class ProjectManagerApp(ctk.CTk):
         if not software_to_uninstall:
             return
 
+        # Offload dependency check and uninstall to a background thread
+        threading.Thread(target=self._uninstall_software_worker, args=(software_to_uninstall, name), daemon=True).start()
+
+    def _uninstall_software_worker(self, software_to_uninstall, name):
         # Get all other active projects
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         all_projects = load_registry(self)
@@ -2298,10 +2302,13 @@ class ProjectManagerApp(ctk.CTk):
         for project_name in other_active_projects:
             other_manifest_path = os.path.join(root, project_name, "omni.json")
             if os.path.exists(other_manifest_path):
-                with open(other_manifest_path, "r") as f:
-                    other_data = json.load(f)
-                for s in other_data.get("software", []):
-                    other_dependencies.add(s)
+                try:
+                    with open(other_manifest_path, "r") as f:
+                        other_data = json.load(f)
+                    for s in other_data.get("software", []):
+                        other_dependencies.add(s)
+                except Exception:
+                    pass
 
         # Uninstall software if it's not a dependency of any other active project
         for app in software_to_uninstall:
