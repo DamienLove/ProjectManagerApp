@@ -74,6 +74,7 @@ class DummyWidget:
         pass
     def winfo_rootx(self): return 0
     def winfo_rooty(self): return 0
+    def winfo_exists(self): return 1
     def wm_overrideredirect(self, *args): pass
     def wm_geometry(self, *args): pass
     def wait(self, *args): pass
@@ -162,7 +163,14 @@ class TestUXEmptyState(unittest.TestCase):
              patch.object(ProjectManagerApp, '_init_firebase'), \
              patch.object(ProjectManagerApp, '_check_queue'), \
              patch.dict(os.environ, {"LOCAL_WORKSPACE_ROOT": self.test_dir}), \
+             patch('threading.Thread') as mock_thread, \
              patch('main.LoginWindow', MagicMock()):
+
+            # Make Thread run synchronously
+            def run_sync(target=None, args=(), daemon=None):
+                if target: target(*args)
+                return MagicMock()
+            mock_thread.side_effect = run_sync
 
             app = ProjectManagerApp()
             app.project_list = CTkScrollableFrame(app)

@@ -1908,9 +1908,10 @@ class ProjectManagerApp(ctk.CTk):
 
     
     def _refresh_projects(self):
-        for w in self.project_list.winfo_children(): w.destroy()
-        self.category_frames = {}
+        # Offload heavy scanning to a thread
+        threading.Thread(target=self._refresh_worker, daemon=True).start()
 
+    def _refresh_worker(self):
         root = os.getenv("LOCAL_WORKSPACE_ROOT", DEFAULT_WORKSPACE)
         if not os.path.exists(root): os.makedirs(root)
         
@@ -1968,6 +1969,18 @@ class ProjectManagerApp(ctk.CTk):
             cat = project_to_cat.get(name, "Uncategorized")
             if cat not in grouped: grouped[cat] = []
             grouped[cat].append((name, registry[name]))
+
+        # Schedule UI update
+        self.after(0, lambda: self._render_projects(grouped, registry))
+
+    def _render_projects(self, grouped, registry):
+        # Check if window still exists before updating UI
+        try:
+            if not self.winfo_exists(): return
+        except Exception: return
+
+        for w in self.project_list.winfo_children(): w.destroy()
+        self.category_frames = {}
 
         # 5. Render
         total_projects = sum(len(p) for p in grouped.values())
