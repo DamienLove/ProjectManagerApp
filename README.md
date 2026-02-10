@@ -37,4 +37,3 @@ Omni Project Remote allows you to control your workstation from your phone using
 
 ## Documentation
 For detailed technical info, visit the [Wiki](https://github.com/DamienLove/ProjectManagerApp/wiki).
-
