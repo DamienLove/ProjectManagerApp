@@ -7,3 +7,8 @@
 **Vulnerability:** `backup_external_resources` trusted `omni.json` to define "external paths" for backup, which, combined with a permissive `is_path_safe` check, allowed malicious projects to steal files from outside the workspace.
 **Learning:** Features that allow "importing" or "backing up" external files defined by project metadata are inherent SSRF/Path Traversal risks. Context-aware validation (is this path part of the project?) is crucial.
 **Prevention:** Enforce strict Allow-list policies for filesystem access. Only allow `LOCAL_WORKSPACE_ROOT` by default. Require explicit user configuration (`REMOTE_ALLOWED_ROOTS`) to access external paths.
+
+## 2024-06-03 - [Medium] Sensitive Data Leak in Logs
+**Vulnerability:** Commands executed via the remote agent were logged in plain text, potentially exposing secrets (passwords, tokens) passed as arguments.
+**Learning:** Logging raw user input or command strings without sanitization is a common source of secret leakage.
+**Prevention:** Implement a centralized `sanitize_command` utility that redacts known sensitive keywords before logging any command execution.
