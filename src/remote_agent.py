@@ -23,6 +23,17 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from starlette.concurrency import run_in_threadpool
 
+# Regex to identify sensitive data in commands
+SENSITIVE_PATTERN = re.compile(
+    r"(?i)(\b(?:password|passwd|token|api[_-]?key|client[_-]?secret|secret[_-]?key|auth|bearer)\b)([\s=]+)((?:['\"][^'\"]*['\"]|[^\s;&|]+))"
+)
+
+def sanitize_command(cmd: str) -> str:
+    """Redacts sensitive information from command strings."""
+    if not cmd:
+        return ""
+    return SENSITIVE_PATTERN.sub(r"\1\2REDACTED", cmd)
+
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "5.0.0"
 def get_base_dir() -> str:
@@ -1085,7 +1096,7 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="cmd is required")
     if cwd and not is_path_safe(cwd):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
-    log(f"Command: {cmd} (cwd={cwd})")
+    log(f"Command: {sanitize_command(cmd)} (cwd={cwd})")
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1149,7 +1160,7 @@ async def ws_terminal(ws: WebSocket):
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
-                log(f"WS run: {cmd}")
+                log(f"WS run: {sanitize_command(cmd)}")
                 try:
                     session_id = start_command(loop, ws, cmd, cwd, env_overrides)
                     await send_ws(ws, {"type": "started", "sessionId": session_id})
