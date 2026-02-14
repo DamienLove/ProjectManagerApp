@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 class TestRemoteAgentAuth(unittest.TestCase):
     def setUp(self):
+        # Ensure our specific mock_fastapi is used
+        sys.modules["fastapi"] = mock_fastapi
+
         # Force reload of remote_agent to ensure it uses the mocks
         if "remote_agent" in sys.modules:
             del sys.modules["remote_agent"]
