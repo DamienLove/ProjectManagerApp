@@ -25,6 +25,28 @@ from starlette.concurrency import run_in_threadpool
 
 APP_NAME = "OmniProjectSync Remote Agent"
 VERSION = "5.0.0"
+
+# Sentinel Security: Regex to catch passwords/tokens in commands
+SENSITIVE_PATTERN = re.compile(
+    r"(?i)((?:-p|--password|--token|--key|--secret|--auth|--api-key|--access-token)[=\s]+)([^\s|]+)|"
+    r"((?:password|passwd|pwd|secret|token|key|api[_-]key|access[_-]token|auth[_-]token|client[_-]secret)\s*[=:]\s*)([^\s|]+)|"
+    r"(Bearer\s+)([^\s|]+)"
+)
+
+def sanitize_command(cmd: str) -> str:
+    """Redact sensitive arguments from command strings for logging."""
+    if not cmd:
+        return ""
+    def replace(match):
+        if match.group(1):
+            return f"{match.group(1)}[REDACTED]"
+        if match.group(3):
+            return f"{match.group(3)}[REDACTED]"
+        if match.group(5):
+            return f"{match.group(5)}[REDACTED]"
+        return match.group(0)
+    return SENSITIVE_PATTERN.sub(replace, cmd)
+
 def get_base_dir() -> str:
     # When packaged (PyInstaller), anchor config next to the executable.
     if getattr(sys, "frozen", False):
@@ -1085,7 +1107,7 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="cmd is required")
     if cwd and not is_path_safe(cwd):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
-    log(f"Command: {cmd} (cwd={cwd})")
+    log(f"Command: {sanitize_command(cmd)} (cwd={cwd})")
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1149,7 +1171,7 @@ async def ws_terminal(ws: WebSocket):
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
-                log(f"WS run: {cmd}")
+                log(f"WS run: {sanitize_command(cmd)}")
                 try:
                     session_id = start_command(loop, ws, cmd, cwd, env_overrides)
                     await send_ws(ws, {"type": "started", "sessionId": session_id})
