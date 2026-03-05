@@ -38,8 +38,6 @@ CONFIG_DIR = os.path.join(BASE_DIR, "config")
 LOCAL_REGISTRY_PATH = os.path.join(CONFIG_DIR, "project_registry.json")
 
 DEFAULT_WORKSPACE = r"C:\\Projects"
-PROTECTED_PATHS = [r"C:\\Windows", r"C:\\Program Files", r"C:\\Program Files (x86)", r"C:\\"]
-
 # Folders to ignore during backup/restore
 SYNC_IGNORE_PATTERNS = [
     ".git", ".idea", ".vscode", "node_modules", "venv", ".venv", 
@@ -115,7 +113,9 @@ HIDDEN_PROJECTS = [h.strip().lower() for h in os.getenv("HIDDEN_PROJECTS", "").s
 # Performance Optimization: Pre-calculate absolute paths
 ABS_LOCAL_WORKSPACE_ROOT = os.path.abspath(LOCAL_WORKSPACE_ROOT)
 ABS_REMOTE_ALLOWED_ROOTS = [os.path.abspath(p) for p in REMOTE_ALLOWED_ROOTS]
-ABS_PROTECTED_PATHS = [os.path.abspath(p) for p in PROTECTED_PATHS]
+
+# Pre-compiled regex for winget parsing optimization
+_WINGET_SPLIT_PATTERN = re.compile(r"\s{2,}")
 
 # Initialize Firebase
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "omniremote-e7afd")
@@ -559,10 +559,6 @@ def is_path_safe(path: str) -> bool:
             if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
                 return True
         return False
-    # Otherwise block only obviously dangerous roots.
-    for p_abs in ABS_PROTECTED_PATHS:
-        if abs_path == p_abs or abs_path.startswith(p_abs + os.sep):
-            return False
 
     # Sentinel Security Fix: Deny by default.
     # If path is not in workspace and not in allowed roots, block it.
@@ -713,7 +709,8 @@ def parse_winget_list_output(output: str):
             continue
         if "No installed package found" in line:
             continue
-        parts = re.split(r"\s{2,}", line.strip())
+        # Bolt Optimization: Use pre-compiled regex
+        parts = _WINGET_SPLIT_PATTERN.split(line.strip())
         if len(parts) < 2:
             continue
         name = parts[0].strip()
