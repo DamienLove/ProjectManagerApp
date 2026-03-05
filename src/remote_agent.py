@@ -513,6 +513,19 @@ def sanitize_command(cmd: str) -> str:
     return SENSITIVE_PATTERN.sub(r"\1\2[REDACTED]", cmd)
 
 
+SENSITIVE_PATTERN = re.compile(
+    r'(?i)(password|passwd|pwd|token|api_key|secret|auth_token|access_token)'
+    r'([=:\s]+)'
+    r'([^\s|;]+)',
+    re.IGNORECASE
+)
+
+def sanitize_command(cmd: str) -> str:
+    if not cmd:
+        return ""
+    return SENSITIVE_PATTERN.sub(r'\1\2[REDACTED]', cmd)
+
+
 def log(msg: str) -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
