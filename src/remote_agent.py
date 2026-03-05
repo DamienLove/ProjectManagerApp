@@ -500,6 +500,18 @@ _registry_lock = threading.Lock()
 _registry_cache: Optional[Dict[str, str]] = None
 _registry_mtime: float = 0.0
 
+SENSITIVE_KEYWORDS = [
+    "password", "passwd", "pwd", "token", "secret",
+    "auth", "api[-_]?key", "access[-_]?token", "bearer"
+]
+SENSITIVE_PATTERN = re.compile(r"(?i)\b(" + "|".join(SENSITIVE_KEYWORDS) + r")([=:\s]+)([^\s;]+)")
+
+def sanitize_command(cmd: str) -> str:
+    """Redact potentially sensitive information from command strings."""
+    if not cmd:
+        return ""
+    return SENSITIVE_PATTERN.sub(r"\1\2[REDACTED]", cmd)
+
 
 def log(msg: str) -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -1085,7 +1097,7 @@ async def api_command(request: Request):
         raise HTTPException(status_code=400, detail="cmd is required")
     if cwd and not is_path_safe(cwd):
         raise HTTPException(status_code=400, detail="Unsafe working directory")
-    log(f"Command: {cmd} (cwd={cwd})")
+    log(f"Command: {sanitize_command(cmd)} (cwd={cwd})")
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1149,7 +1161,7 @@ async def ws_terminal(ws: WebSocket):
                 if not cmd:
                     await send_ws(ws, {"type": "error", "message": "cmd is required"})
                     continue
-                log(f"WS run: {cmd}")
+                log(f"WS run: {sanitize_command(cmd)}")
                 try:
                     session_id = start_command(loop, ws, cmd, cwd, env_overrides)
                     await send_ws(ws, {"type": "started", "sessionId": session_id})
