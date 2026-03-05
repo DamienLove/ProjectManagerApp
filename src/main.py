@@ -600,6 +600,16 @@ class ProjectConfigWindow(ctk.CTkToplevel):
             btn.pack(side="right")
             ToolTip(btn, "Remove app state")
 
+        # Empty States
+        if not self.data.get("external_paths"):
+            ctk.CTkLabel(self.scroll_files, text="No external folders synced.\nAdd a folder to include it in the project backup.", text_color="gray").pack(pady=20)
+
+        if not self.data.get("software"):
+            ctk.CTkLabel(self.scroll_soft, text="No required software configured.\nAdd software IDs to ensure they are installed.", text_color="gray").pack(pady=20)
+
+        if not self.data.get("app_state_paths"):
+            ctk.CTkLabel(self.scroll_app_state, text="No app state paths.\nAdd paths to config files that should be restored.", text_color="gray").pack(pady=20)
+
     def add_path(self):
         p=self.entry_path.get().strip()
         if p and p not in self.data["external_paths"]: self.data["external_paths"].append(p); self.save_manifest()
